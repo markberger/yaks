@@ -59,7 +59,6 @@ func (h MetadataRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	}
 
 	response := kmsg.NewMetadataResponse()
-	response.Default()
 	response.SetVersion(request.Version)
 	response.ThrottleMillis = 0
 	response.Brokers = append(response.Brokers, kmsg.MetadataResponseBroker{

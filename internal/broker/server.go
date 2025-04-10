@@ -38,6 +38,7 @@ func (b *Broker) Add(handler Handler) {
 }
 
 func (b *Broker) ListenAndServe(ctx context.Context) {
+	// TCP listener
 	address := fmt.Sprintf("%s:%d", b.host, b.port)
 	log.WithFields(log.Fields{"host": b.host, "port": b.port}).Info("Listening...")
 	listener, err := net.Listen("tcp", address)
@@ -46,23 +47,31 @@ func (b *Broker) ListenAndServe(ctx context.Context) {
 	}
 	defer listener.Close()
 
+	// Shutdown goroutine because Accept blocks
+	go func() {
+		<-ctx.Done()
+		_ = listener.Close()
+	}()
+
+	// Accept connections and spawn goroutines to handle requests
 	for {
-		select {
-		case <-ctx.Done():
-			return
-
-		default:
-			conn, err := listener.Accept()
-			if err != nil {
-				log.Fatal(err)
+		conn, err := listener.Accept()
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				log.Info("TCP listener closed due to ctx cancel")
+				return
+			default:
+				log.WithError(err).Error("Accept error")
+				continue
 			}
-
-			log.WithFields(log.Fields{"client": conn.RemoteAddr()}).Info("Connection accepted")
-			go func() {
-				b.handleConn(ctx, conn)
-				log.WithFields(log.Fields{"client": conn.RemoteAddr()}).Info("Connection closed")
-			}()
 		}
+
+		log.WithFields(log.Fields{"client": conn.RemoteAddr()}).Info("Connection accepted")
+		go func() {
+			b.handleConn(ctx, conn)
+			log.WithFields(log.Fields{"client": conn.RemoteAddr()}).Info("Connection closed")
+		}()
 	}
 }
 
@@ -76,6 +85,7 @@ func (b *Broker) handleConn(ctx context.Context, conn net.Conn) {
 		// Check context before proceeding
 		select {
 		case <-ctx.Done():
+			log.WithField("client", conn.RemoteAddr()).Info("ctx signaled - closing connection")
 			return
 		default:
 		}

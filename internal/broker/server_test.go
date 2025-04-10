@@ -13,7 +13,12 @@ import (
 )
 
 func TestApiVersionsHandler(t *testing.T) {
-	ctx, cancelFn := context.WithCancel(context.TODO())
+	ctx, cancelFn := context.WithCancel(context.Background())
+	defer func() {
+		cancelFn()
+		time.Sleep(time.Second)
+	}()
+
 	broker := NewBroker(0, "localhost", 9092)
 	broker.Add(NewApiVersionsRequestHandler(broker.handlerRegistry))
 	go broker.ListenAndServe(ctx)
@@ -29,7 +34,6 @@ func TestApiVersionsHandler(t *testing.T) {
 
 	request := kmsg.NewApiVersionsRequest()
 	response, err := client.Request(ctx, &request)
-	cancelFn()
 	if err != nil {
 		t.Errorf("Failed to make request: %v\n", err)
 	}
@@ -49,7 +53,12 @@ func TestApiVersionsHandler(t *testing.T) {
 }
 
 func TestMetadataRequestHandler(t *testing.T) {
-	ctx, cancelFn := context.WithCancel(context.TODO())
+	ctx, cancelFn := context.WithCancel(context.Background())
+	defer func() {
+		cancelFn()
+		time.Sleep(time.Second)
+	}()
+
 	broker := NewBroker(0, "localhost", 9092)
 	broker.Add(NewApiVersionsRequestHandler(broker.handlerRegistry))
 	broker.Add(NewMetadataRequestHandler(broker))
@@ -67,7 +76,6 @@ func TestMetadataRequestHandler(t *testing.T) {
 	request := kmsg.NewMetadataRequest()
 	request.SetVersion(3)
 	response, err := client.Request(ctx, &request)
-	cancelFn()
 	if err != nil {
 		t.Errorf("Failed to make request: %v\n", err)
 	}
@@ -76,8 +84,11 @@ func TestMetadataRequestHandler(t *testing.T) {
 }
 
 func TestConfluentMetadataRequest(t *testing.T) {
-	ctx, cancelFn := context.WithCancel(context.TODO())
-	defer cancelFn()
+	ctx, cancelFn := context.WithCancel(context.Background())
+	defer func() {
+		cancelFn()
+		time.Sleep(time.Second)
+	}()
 
 	broker := NewBroker(0, "localhost", 9092)
 	broker.Add(NewApiVersionsRequestHandler(broker.handlerRegistry))
