@@ -66,6 +66,12 @@ func HeaderVersionForRequest(key int16, requestVersion int16) (int16, error) {
 		} else {
 			return 1, nil
 		}
+	case int16(kmsg.CreateTopics):
+		if requestVersion >= 5 {
+			return 2, nil
+		} else {
+			return 1, nil
+		}
 	default:
 		return 0, fmt.Errorf("unknown header version for key: %v", kmsg.NameForKey(key))
 	}
