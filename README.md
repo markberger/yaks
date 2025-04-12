@@ -21,9 +21,23 @@ go test ./...
 ## Project Layout
 
 ```
-internal/
-├── api/        # Kafka api logic + serialization
-├── broker/     # Generic Kafka broker implementation
-├── server/     # yaks-agent
-└── metastore/  # Store meta data in postgres
+.
+├── bin/
+│   ├── agent.go    # run yaks-agent
+│   └── migrator.go # apply db migrations
+└── internal/
+   ├── api/         # kafka api logic + serialization
+   ├── agent/       # yaks-agent
+   ├── broker/      # generic kafka broker implementation
+   └── metastore/   # store metadata in postgres
 ```
+
+## Related Resources
+
+This package would not be possible without these great resources:
+
+- [franz-go](https://github.com/twmb/franz-go): Go library for api message
+  serialization - [_Travis Bischel_](https://github.com/twmb)
+
+- [Kafka protocl practical guide](https://ivanyu.me/blog/2024/09/08/kafka-protocol-practical-guide/) -
+  [_Ivan Yurchenko_](https://github.com/ivanyu)
