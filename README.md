@@ -26,10 +26,11 @@ go test ./...
 │   ├── agent.go    # run yaks-agent
 │   └── migrator.go # apply db migrations
 └── internal/
-   ├── api/         # kafka api logic + serialization
-   ├── agent/       # yaks-agent
-   ├── broker/      # generic kafka broker implementation
-   └── metastore/   # store metadata in postgres
+    ├── api/         # kafka api logic + serialization
+    ├── agent/       # yaks-agent
+    ├── broker/      # generic kafka broker implementation
+    ├── handlers/    # kafka request handlers
+    └── metastore/   # store metadata in postgres
 ```
 
 ## Related Resources
