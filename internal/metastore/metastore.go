@@ -2,16 +2,21 @@ package metastore
 
 import "gorm.io/gorm"
 
+type Metastore interface {
+	CreateTopic(name string, s3Path string) error
+	GetTopics() ([]Topic, error)
+}
+
 // Struct responsible for logic between server and postgres
-type Metastore struct {
+type GormMetastore struct {
 	db *gorm.DB
 }
 
-func NewMetastore(db *gorm.DB) *Metastore {
-	return &Metastore{db}
+func NewGormMetastore(db *gorm.DB) *GormMetastore {
+	return &GormMetastore{db}
 }
 
-func (m *Metastore) CreateTopic(name string, s3Path string) error {
+func (m *GormMetastore) CreateTopic(name string, s3Path string) error {
 	topic := &Topic{
 		Name:       name,
 		S3BasePath: s3Path,
@@ -21,7 +26,7 @@ func (m *Metastore) CreateTopic(name string, s3Path string) error {
 	return m.db.Create(topic).Error
 }
 
-func (m *Metastore) GetTopics() ([]Topic, error) {
+func (m *GormMetastore) GetTopics() ([]Topic, error) {
 	var topics []Topic
 	err := m.db.Raw("select * from topics").Scan(&topics).Error
 	if err != nil {

@@ -139,9 +139,9 @@ func (h MockMetadataRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error
 	response.SetVersion(request.Version)
 	response.ThrottleMillis = 0
 	response.Brokers = append(response.Brokers, kmsg.MetadataResponseBroker{
-		NodeID: h.broker.nodeID,
-		Host:   h.broker.host,
-		Port:   h.broker.port,
+		NodeID: h.broker.NodeID,
+		Host:   h.broker.Host,
+		Port:   h.broker.Port,
 	})
 	response.ClusterID = kmsg.StringPtr("cluster id")
 	response.ControllerID = 0

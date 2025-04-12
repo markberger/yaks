@@ -11,7 +11,7 @@ func TestCreateTopic(t *testing.T) {
 	tdb := NewTestDB(t)
 	defer tdb.Close(t)
 
-	metastore := NewMetastore(tdb.DB)
+	metastore := NewGormMetastore(tdb.DB)
 	topicName := "test-topic"
 	s3Path := "s3://some-bucket/topics/test-topic"
 	err := metastore.CreateTopic(topicName, s3Path)

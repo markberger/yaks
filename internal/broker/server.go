@@ -19,9 +19,9 @@ type key int
 const CONN_IP_KEY key = 0
 
 type Broker struct {
-	nodeID          int32
-	host            string
-	port            int32
+	NodeID          int32
+	Host            string
+	Port            int32
 	handlerRegistry *handlerRegistry
 }
 
@@ -39,8 +39,8 @@ func (b *Broker) Add(handler Handler) {
 
 func (b *Broker) ListenAndServe(ctx context.Context) {
 	// TCP listener
-	address := fmt.Sprintf("%s:%d", b.host, b.port)
-	log.WithFields(log.Fields{"host": b.host, "port": b.port}).Info("Listening...")
+	address := fmt.Sprintf("%s:%d", b.Host, b.Port)
+	log.WithFields(log.Fields{"host": b.Host, "port": b.Port}).Info("Listening...")
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		log.Fatal(err)
