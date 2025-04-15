@@ -17,7 +17,8 @@ func NewApiVersionsRequestHandler(handlerRegistry *handlerRegistry) ApiVersionsR
 func (h ApiVersionsRequestHandler) Key() kmsg.Key     { return kmsg.ApiVersions }
 func (h ApiVersionsRequestHandler) MinVersion() int16 { return 0 }
 func (h ApiVersionsRequestHandler) MaxVersion() int16 { return 4 }
-func (h ApiVersionsRequestHandler) Handle(request kmsg.Request) (kmsg.Response, error) {
+func (h ApiVersionsRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
+	request := r.(*kmsg.ApiVersionsRequest)
 	response := kmsg.NewApiVersionsResponse()
 	response.SetVersion(request.GetVersion())
 	if response.GetVersion() > h.MaxVersion() {
@@ -37,6 +38,5 @@ func (h ApiVersionsRequestHandler) Handle(request kmsg.Request) (kmsg.Response, 
 	if response.GetVersion() >= 1 {
 		response.SetThrottle(0)
 	}
-
 	return &response, nil
 }

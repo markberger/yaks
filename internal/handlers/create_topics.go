@@ -21,6 +21,7 @@ func (h *CreateTopicsRequestHandler) Handle(r kmsg.Request) (kmsg.Response, erro
 	// TODO: respect ValidateOnly flag
 	request := r.(*kmsg.CreateTopicsRequest)
 	response := kmsg.NewCreateTopicsResponse()
+	response.SetVersion(request.GetVersion())
 	response.ThrottleMillis = 0
 
 	for _, t := range request.Topics {

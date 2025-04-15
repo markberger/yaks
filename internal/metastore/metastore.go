@@ -1,6 +1,8 @@
 package metastore
 
-import "gorm.io/gorm"
+import (
+	"gorm.io/gorm"
+)
 
 type Metastore interface {
 	CreateTopic(name string, s3Path string) error
@@ -23,7 +25,8 @@ func (m *GormMetastore) CreateTopic(name string, s3Path string) error {
 		MinOffset:  0,
 		MaxOffset:  0,
 	}
-	return m.db.Create(topic).Error
+	result := m.db.Create(topic)
+	return result.Error
 }
 
 func (m *GormMetastore) GetTopics() ([]Topic, error) {

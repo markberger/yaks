@@ -14,10 +14,6 @@ import (
 	"github.com/twmb/franz-go/pkg/kmsg"
 )
 
-type key int
-
-const CONN_IP_KEY key = 0
-
 type Broker struct {
 	NodeID          int32
 	Host            string
@@ -27,8 +23,7 @@ type Broker struct {
 
 func NewBroker(nodeID int32, host string, port int32) *Broker {
 	b := Broker{nodeID, host, port, NewHandlerRegistry()}
-	// b.Add(NewApiVersionsRequestHandler(b.handlerRegistry))
-	// b.Add(NewMetadataRequestHandler(&b))
+	b.Add(NewApiVersionsRequestHandler(b.handlerRegistry))
 	return &b
 }
 
@@ -92,6 +87,7 @@ func (b *Broker) handleConn(ctx context.Context, conn net.Conn) {
 
 		// Read from connection
 		if _, err := io.ReadFull(reader, sizeBuf); err != nil {
+			log.Error("failed to read msg size: ", err)
 			return
 		}
 		size := binary.BigEndian.Uint32(sizeBuf)
