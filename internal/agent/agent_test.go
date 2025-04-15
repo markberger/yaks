@@ -39,7 +39,14 @@ func TestCreateTopic(t *testing.T) {
 	require.Equal(t, result[0].Error.Code(), ckafka.ErrNoError)
 
 	// Confirm topic is present in the next metadata request
+	metadata, err = adminClient.GetMetadata(nil, true, 5000)
+	require.NoError(t, err)
+	require.Equal(t, len(metadata.Topics), 1)
 
+	topic, ok := metadata.Topics["test-topic"]
+	require.True(t, ok)
+	require.Equal(t, len(topic.Partitions), 1)
+	require.Equal(t, topic.Partitions[0].Replicas, []int32{0})
 }
 
 func NewTestAgent(t *testing.T) *Agent {
