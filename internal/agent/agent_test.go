@@ -18,8 +18,6 @@ func TestCreateTopic(t *testing.T) {
 		time.Sleep(time.Second)
 	}()
 	agent := NewTestAgent(t)
-	agent.AddHandlers()
-	agent.ApplyMigrations()
 	go agent.ListenAndServe(ctx)
 
 	// When admin client makes a metadata request we should have no topics
@@ -54,6 +52,7 @@ func NewTestAgent(t *testing.T) *Agent {
 	agent, err := NewAgent(testDB.Config, "localhost", 9092)
 	require.NoError(t, err)
 
+	agent.AddHandlers()
 	err = agent.ApplyMigrations()
 	require.NoError(t, err)
 	return agent

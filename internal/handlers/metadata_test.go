@@ -24,6 +24,7 @@ func (m mockMetastore) GetTopics() ([]metastore.Topic, error) {
 
 	return result, nil
 }
+func (m mockMetastore) ApplyMigrations() error { return nil }
 
 func TestMetadataRequestHandler(t *testing.T) {
 	// When the handler gets a MetadataRequest

@@ -113,7 +113,6 @@ func (b *Broker) handleConn(ctx context.Context, conn net.Conn) {
 				"key":           header.KeyName(),
 				"version":       header.Version(),
 				"correlationID": header.CorrelationID(),
-				//"bytes":         body,
 			},
 		).Info("Received request")
 
@@ -147,7 +146,6 @@ func (b *Broker) handleConn(ctx context.Context, conn net.Conn) {
 				"key":           header.KeyName(),
 				"version":       header.Version(),
 				"correlationID": header.CorrelationID(),
-				//"bytes":         dst,
 			},
 		).Info("Sending response")
 
@@ -162,7 +160,6 @@ func (b *Broker) handleConn(ctx context.Context, conn net.Conn) {
 				"key":           header.KeyName(),
 				"version":       header.Version(),
 				"correlationID": header.CorrelationID(),
-				//"bytes":         dst,
 			},
 		).Info("Response sent")
 	}

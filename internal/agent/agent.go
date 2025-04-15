@@ -29,7 +29,7 @@ func NewAgent(cfg metastore.Config, host string, port int32) (*Agent, error) {
 // TODO: agent should not apply migrations it should be done by a separate
 // cmd tool before deployment
 func (a *Agent) ApplyMigrations() error {
-	return a.db.AutoMigrate(&metastore.Topic{}, &metastore.RecordBatch{})
+	return a.metastore.ApplyMigrations()
 }
 
 func (a *Agent) AddHandlers() {
