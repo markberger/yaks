@@ -3,73 +3,48 @@ package integration
 import (
 	"context"
 	"crypto/rand"
-	"fmt"
-	"log"
 	"math/big"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/markberger/yaks/integration/container"
 	"github.com/markberger/yaks/internal/agent"
 	"github.com/markberger/yaks/internal/metastore"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	ckafka "github.com/confluentinc/confluent-kafka-go/kafka"
 )
 
-var dbContainer testcontainers.Container
-
 func TestMain(m *testing.M) {
-	ctx := context.Background()
-
-	// Start the container once for all tests
-	var err error
-	dbContainer, err = testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        "postgres:latest",
-			ExposedPorts: []string{"5432/tcp"},
-			Env: map[string]string{
-				"POSTGRES_PASSWORD": "password",
-				"POSTGRES_DB":       "testdb",
-			},
-			WaitingFor: wait.ForListeningPort("5432/tcp"),
-		},
-		Started: true,
-	})
-	if err != nil {
-		log.Fatalf("failed to start postgres container: %v", err)
-	}
-	time.Sleep(2 * time.Second)
+	_ = container.GetTestContainer()
 
 	code := m.Run()
 
-	dbContainer.Terminate(ctx)
+	container.TerminateTestContainer()
 	os.Exit(code)
 }
 
 func NewAgent(t *testing.T) *agent.Agent {
-	suffix, err := randomString(8)
+	dbName, err := container.GetNewDatabase()
 	if err != nil {
-		t.Fatalf("failed to generate random db name: %v", err)
+		t.Fatalf("failed to create db: %v", err)
 	}
 
-	ctx := context.Background()
-	mappedPort, err := dbContainer.MappedPort(ctx, "5432")
+	port, err := container.GetContainerPort()
 	if err != nil {
-		t.Fatalf("failed to get mapped port: %v", err)
+		t.Fatalf("failed to get container port: %v", err)
 	}
-
-	dbName := fmt.Sprintf("testdb-%s", suffix)
 	config := metastore.Config{
 		Host:     "localhost",
-		Port:     mappedPort.Int(),
+		Port:     port,
 		User:     "testuser",
 		Password: "testpassword",
 		DBName:   dbName,
-		SSLMode:  "false",
+		SSLMode:  "disable",
 	}
 	agent, err := agent.NewAgent(config, "localhost", 9092)
+	agent.ApplyMigrations()
+	agent.AddHandlers()
 	if err != nil {
 		t.Fatalf("failed to create agent: %v", err)
 	}
