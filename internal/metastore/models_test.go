@@ -6,10 +6,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestTopicModel(t *testing.T) {
-	tdb := NewTestDB()
-	tdb.DB.AutoMigrate(&Topic{})
-	defer tdb.Close()
+func (s *MetastoreTestSuite) TestTopicModel() {
+	db := s.TestDB.InitDB()
+	db.AutoMigrate(&Topic{})
 
 	tests := []struct {
 		name    string
@@ -39,8 +38,8 @@ func TestTopicModel(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tdb.DB.Create(tt.topic).Error
+		s.T().Run(tt.name, func(t *testing.T) {
+			err := db.Create(tt.topic).Error
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -51,7 +50,7 @@ func TestTopicModel(t *testing.T) {
 
 				// Verify we can retrieve it
 				var found Topic
-				err := tdb.DB.First(&found, "id = ?", tt.topic.ID).Error
+				err := db.First(&found, "id = ?", tt.topic.ID).Error
 				assert.NoError(t, err)
 				assert.Equal(t, tt.topic.Name, found.Name)
 				assert.Equal(t, tt.topic.S3BasePath, found.S3BasePath)
@@ -62,10 +61,9 @@ func TestTopicModel(t *testing.T) {
 	}
 }
 
-func TestRecordBatchModel(t *testing.T) {
-	tdb := NewTestDB()
-	tdb.DB.AutoMigrate(&Topic{}, &RecordBatch{})
-	defer tdb.Close()
+func (s *MetastoreTestSuite) TestRecordBatchModel() {
+	db := s.TestDB.InitDB()
+	db.AutoMigrate(&Topic{}, &RecordBatch{})
 
 	// Create a topic first
 	topic := &Topic{
@@ -74,7 +72,7 @@ func TestRecordBatchModel(t *testing.T) {
 		MinOffset:  0,
 		MaxOffset:  1000,
 	}
-	assert.NoError(t, tdb.DB.Create(topic).Error)
+	assert.NoError(s.T(), db.Create(topic).Error)
 
 	tests := []struct {
 		name    string
@@ -104,8 +102,8 @@ func TestRecordBatchModel(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tdb.DB.Create(tt.batch).Error
+		s.T().Run(tt.name, func(t *testing.T) {
+			err := db.Create(tt.batch).Error
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -116,7 +114,7 @@ func TestRecordBatchModel(t *testing.T) {
 
 				// Verify we can retrieve it with the topic relation
 				var found RecordBatch
-				err := tdb.DB.Preload("Topic").First(&found, "id = ?", tt.batch.ID).Error
+				err := db.Preload("Topic").First(&found, "id = ?", tt.batch.ID).Error
 				assert.NoError(t, err)
 				assert.Equal(t, tt.batch.S3Path, found.S3Path)
 				assert.Equal(t, tt.batch.StartOffset, found.StartOffset)
