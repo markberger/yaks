@@ -8,10 +8,11 @@ import (
 )
 
 func TestCreateTopic(t *testing.T) {
-	tdb := NewTestDB(t)
-	defer tdb.Close(t)
-
+	tdb := NewTestDB()
+	defer tdb.Close()
 	metastore := NewGormMetastore(tdb.DB)
+	metastore.ApplyMigrations()
+
 	topicName := "test-topic"
 	s3Path := "s3://some-bucket/topics/test-topic"
 	err := metastore.CreateTopic(topicName, s3Path)

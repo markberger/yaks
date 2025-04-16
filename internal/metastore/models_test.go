@@ -7,8 +7,9 @@ import (
 )
 
 func TestTopicModel(t *testing.T) {
-	tdb := NewTestDB(t)
-	defer tdb.Close(t)
+	tdb := NewTestDB()
+	tdb.DB.AutoMigrate(&Topic{})
+	defer tdb.Close()
 
 	tests := []struct {
 		name    string
@@ -62,8 +63,9 @@ func TestTopicModel(t *testing.T) {
 }
 
 func TestRecordBatchModel(t *testing.T) {
-	tdb := NewTestDB(t)
-	defer tdb.Close(t)
+	tdb := NewTestDB()
+	tdb.DB.AutoMigrate(&Topic{}, &RecordBatch{})
+	defer tdb.Close()
 
 	// Create a topic first
 	topic := &Topic{

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/markberger/yaks/internal/broker"
 	"github.com/markberger/yaks/internal/handlers"
@@ -16,14 +15,10 @@ type Agent struct {
 	broker    *broker.Broker
 }
 
-func NewAgent(cfg metastore.Config, host string, port int32) (*Agent, error) {
-	db, err := metastore.Connect(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to metastore: %v", err)
-	}
+func NewAgent(db *gorm.DB, host string, port int32) *Agent {
 	metastore := metastore.NewGormMetastore(db)
 	broker := broker.NewBroker(0, host, port)
-	return &Agent{db, metastore, broker}, nil
+	return &Agent{db, metastore, broker}
 }
 
 // TODO: agent should not apply migrations it should be done by a separate

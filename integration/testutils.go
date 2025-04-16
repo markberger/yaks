@@ -2,8 +2,6 @@ package integration
 
 import (
 	"context"
-	"crypto/rand"
-	"math/big"
 	"os"
 	"testing"
 	"time"
@@ -16,15 +14,14 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	_ = container.GetTestContainer()
-
+	container.GetTestContainer() // init singleton
 	code := m.Run()
-
 	container.TerminateTestContainer()
 	os.Exit(code)
 }
 
 func NewAgent(t *testing.T) *agent.Agent {
+	// Set up postgres database
 	dbName, err := container.GetNewDatabase()
 	if err != nil {
 		t.Fatalf("failed to create db: %v", err)
@@ -42,7 +39,13 @@ func NewAgent(t *testing.T) *agent.Agent {
 		DBName:   dbName,
 		SSLMode:  "disable",
 	}
-	agent, err := agent.NewAgent(config, "localhost", 9092)
+	db, err := metastore.Connect(config)
+	if err != nil {
+		t.Fatalf("failed to connect to postgres: %v", err)
+	}
+
+	// Create agent and start serving
+	agent := agent.NewAgent(db, "localhost", 9092)
 	agent.ApplyMigrations()
 	agent.AddHandlers()
 	if err != nil {
@@ -69,18 +72,4 @@ func NewConfluentAdminClient(t *testing.T) *ckafka.AdminClient {
 		t.Fatalf("Failed to create admin client: %v", err)
 	}
 	return adminClient
-}
-
-const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-
-func randomString(n int) (string, error) {
-	result := make([]byte, n)
-	for i := range result {
-		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
-		if err != nil {
-			return "", err
-		}
-		result[i] = letters[num.Int64()]
-	}
-	return string(result), nil
 }
