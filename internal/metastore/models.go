@@ -17,7 +17,7 @@ type BaseModel struct {
 // Represents a kafka topic
 type Topic struct {
 	BaseModel
-	Name       string `gorm:"size:255; not null"`
+	Name       string `gorm:"size:255; not null; index"`
 	S3BasePath string `gorm:"size:255; not null"`
 	MinOffset  int64  `gorm:"type:bigint; not null; check:min_offset >= 0"`
 	MaxOffset  int64  `gorm:"type:bigint; not null; check:max_offset >= 0; check:max_offset >= min_offset"`
