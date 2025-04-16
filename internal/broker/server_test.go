@@ -15,13 +15,13 @@ func TestApiVersionsHandler(t *testing.T) {
 	ctx, cancelFn := context.WithCancel(context.Background())
 	defer func() {
 		cancelFn()
-		time.Sleep(time.Second)
+		time.Sleep(500 * time.Millisecond)
 	}()
 
 	broker := NewBroker(0, "localhost", 9092)
 	broker.Add(NewApiVersionsRequestHandler(broker.handlerRegistry))
 	go broker.ListenAndServe(ctx)
-	time.Sleep(1 * time.Second)
+	time.Sleep(500 * time.Millisecond)
 
 	seeds := []string{"localhost:9092"}
 	client, err := kgo.NewClient(
@@ -55,14 +55,14 @@ func TestConfluentMetadataRequest(t *testing.T) {
 	ctx, cancelFn := context.WithCancel(context.Background())
 	defer func() {
 		cancelFn()
-		time.Sleep(time.Second)
+		time.Sleep(500 * time.Millisecond)
 	}()
 
 	broker := NewBroker(0, "localhost", 9092)
 	broker.Add(NewApiVersionsRequestHandler(broker.handlerRegistry))
 	broker.Add(NewMockMetadataRequestHandler(broker))
 	go broker.ListenAndServe(ctx)
-	time.Sleep(1 * time.Second)
+	time.Sleep(500 * time.Millisecond)
 
 	config := &ckafka.ConfigMap{
 		"bootstrap.servers": "localhost:9092",

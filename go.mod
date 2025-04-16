@@ -7,7 +7,6 @@ toolchain go1.24.2
 require (
 	github.com/confluentinc/confluent-kafka-go v1.9.2
 	github.com/google/uuid v1.6.0
-	github.com/lib/pq v1.10.9
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.10.0
 	github.com/testcontainers/testcontainers-go v0.36.0

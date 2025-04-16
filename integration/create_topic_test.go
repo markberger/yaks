@@ -2,15 +2,14 @@ package integration
 
 import (
 	"context"
-	"testing"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCreateTopic(t *testing.T) {
-	NewAgent(t)
-	client := NewConfluentAdminClient(t)
+func (s *IntegrationTestsSuite) TestCreateTopic() {
+	s.NewAgent()
+	client := NewConfluentAdminClient()
 
 	ctx := context.Background()
 	result, err := client.CreateTopics(ctx, []kafka.TopicSpecification{
@@ -20,7 +19,7 @@ func TestCreateTopic(t *testing.T) {
 			ReplicationFactor: 1,
 		},
 	})
-	require.NoError(t, err)
-	require.Len(t, result, 1)
-	require.Equal(t, result[0].Topic, "test-topic")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), result, 1)
+	require.Equal(s.T(), result[0].Topic, "test-topic")
 }
