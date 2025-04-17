@@ -32,3 +32,17 @@ type RecordBatch struct {
 	EndOffset   int64     `gorm:"type:bigint; not null; check:end_offset >= 0; check:end_offset > start_offset"`
 	S3Path      string    `gorm:"size:255; not null"`
 }
+
+// Input structure for a single batch commit request within the batch operation
+type BatchCommitInput struct {
+	TopicName string
+	NRecords  int64
+	S3Path    string
+}
+
+// Output structure containing the result for a single committed batch
+type BatchCommitOutput struct {
+	InputIndex int    `gorm:"column:input_idx"`
+	BaseOffset int64  `gorm:"column:start_offset"`
+	S3Path     string `gorm:"column:s3_path"`
+}
