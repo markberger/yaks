@@ -54,6 +54,12 @@ func internalReadTags(b *kbin.Reader) kmsg.Tags {
 
 func HeaderVersionForRequest(key int16, requestVersion int16) (int16, error) {
 	switch key {
+	case int16(kmsg.Produce):
+		if requestVersion >= 9 {
+			return 2, nil
+		} else {
+			return 1, nil
+		}
 	case int16(kmsg.ApiVersions):
 		if requestVersion >= 3 {
 			return 2, nil
