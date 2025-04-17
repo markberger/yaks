@@ -42,11 +42,6 @@ func (*mockMetastoreCreateTopicFails) CreateTopic(name string, s3Path string) er
 	return errors.New("create topic failed")
 }
 
-// Dummy implementation to satisfy the interface
-func (*mockMetastoreCreateTopicFails) CommitRecordBatches(batches []metastore.BatchCommitInput) ([]metastore.BatchCommitOutput, error) {
-	return nil, errors.New("CommitRecordBatches not implemented in mock") // Or return nil, nil if appropriate
-}
-
 func (s *HandlersTestSuite) TestCreateTopicsHandlerFails() {
 	wrappedMetastore := s.TestDB.InitMetastore()
 	metastore := &mockMetastoreCreateTopicFails{*wrappedMetastore}
