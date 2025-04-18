@@ -10,7 +10,7 @@ import (
 	"github.com/markberger/yaks/internal/metastore"
 	"github.com/stretchr/testify/suite"
 
-	ckafka "github.com/confluentinc/confluent-kafka-go/kafka"
+	ckafka "github.com/confluentinc/confluent-kafka-go/v2/kafka"
 )
 
 type IntegrationTestsSuite struct {
@@ -46,7 +46,7 @@ func (s *IntegrationTestsSuite) NewAgent() *agent.Agent {
 	go agent.ListenAndServe(ctx)
 	s.T().Cleanup(func() {
 		cancelFn()
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	})
 
 	return agent

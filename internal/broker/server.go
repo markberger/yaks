@@ -87,6 +87,10 @@ func (b *Broker) handleConn(ctx context.Context, conn net.Conn) {
 
 		// Read from connection
 		if _, err := io.ReadFull(reader, sizeBuf); err != nil {
+			if err == io.EOF {
+				log.WithField("client", conn.RemoteAddr()).Info("Received EOF - client closed connection")
+				return
+			}
 			log.Error("failed to read msg size: ", err)
 			return
 		}
@@ -133,25 +137,17 @@ func (b *Broker) handleConn(ctx context.Context, conn net.Conn) {
 
 		response, err := handler.Handle(request)
 		if err != nil {
-			log.Error("Handler returned an error")
+			log.Errorf("handler returned an error: %v", err)
 			return
 		}
 
 		// Serialize the response and send it to the client
+		// TODO: check return value of conn.Write
 		dst := make([]byte, 0)
 		dst = AppendResponse(dst, response, header.CorrelationID())
-		log.WithFields(
-			log.Fields{
-				"client":        conn.RemoteAddr(),
-				"key":           header.KeyName(),
-				"version":       header.Version(),
-				"correlationID": header.CorrelationID(),
-			},
-		).Info("Sending response")
-
 		_, err = conn.Write(dst)
 		if err != nil {
-			log.Error("Error encountered when writing response")
+			log.Errorf("Error encountered when writing response: %v", err)
 			return
 		}
 		log.WithFields(

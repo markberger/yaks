@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"errors"
-
 	"github.com/markberger/yaks/internal/broker"
 	"github.com/markberger/yaks/internal/metastore"
 	"github.com/twmb/franz-go/pkg/kmsg"
@@ -21,10 +19,6 @@ func (h *MetadataRequestHandler) MinVersion() int16 { return 0 }
 func (h *MetadataRequestHandler) MaxVersion() int16 { return 7 }
 func (h *MetadataRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	request := r.(*kmsg.MetadataRequest)
-	if request.AllowAutoTopicCreation && len(request.Topics) > 0 {
-		return nil, errors.New("MetadataRequestHandler does not respect allow_auto_topic_creation")
-	}
-
 	response := kmsg.NewMetadataResponse()
 	response.SetVersion(request.GetVersion())
 	response.ThrottleMillis = 0
@@ -39,19 +33,31 @@ func (h *MetadataRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	response.ControllerID = 0
 	response.Topics = []kmsg.MetadataResponseTopic{}
 
-	topics, err := h.metastore.GetTopics()
+	existingTopics, err := h.metastore.GetTopics()
 	if err != nil {
 		return nil, err
 	}
 
-	for _, t := range topics {
+	if request.AllowAutoTopicCreation && len(request.Topics) > 0 {
+		for _, t := range request.Topics {
+			if !topicExists(t, existingTopics) {
+				h.metastore.CreateTopic(*t.Topic, "s3://test-bucket/")
+			}
+		}
+		existingTopics, err = h.metastore.GetTopics()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	for _, t := range existingTopics {
 		topic := kmsg.MetadataResponseTopic{
 			Topic:      &t.Name,
 			IsInternal: false,
 			Partitions: []kmsg.MetadataResponseTopicPartition{
 				{
 					ErrorCode:   0,
-					Partition:   1,
+					Partition:   0,
 					Leader:      h.broker.NodeID,
 					LeaderEpoch: 0,
 					Replicas:    []int32{h.broker.NodeID},
@@ -62,4 +68,13 @@ func (h *MetadataRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 		response.Topics = append(response.Topics, topic)
 	}
 	return &response, nil
+}
+
+func topicExists(t kmsg.MetadataRequestTopic, existingTopics []metastore.Topic) bool {
+	for _, existingTopic := range existingTopics {
+		if *t.Topic == existingTopic.Name {
+			return true
+		}
+	}
+	return false
 }

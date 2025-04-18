@@ -2,10 +2,10 @@ package handlers
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/markberger/yaks/internal/metastore"
 	log "github.com/sirupsen/logrus"
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kmsg"
 )
 
@@ -30,21 +30,23 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	response.ThrottleMillis = 0
 
 	for _, topic := range request.Topics {
-
 		var topicResponse kmsg.ProduceResponseTopic
 		topicResponse.Topic = topic.Topic
-		for _, partition := range topic.Partitions {
+		for n, partition := range topic.Partitions {
+			partitionResponse := kmsg.NewProduceResponseTopicPartition()
+			partitionResponse.Partition = partition.Partition
+
 			var recordBatch kmsg.RecordBatch
 			if err := recordBatch.ReadFrom(partition.Records); err != nil {
-				return nil, fmt.Errorf("failed to read RecordBatch: %v", err)
+				partitionResponse.ErrorCode = kerr.CorruptMessage.Code
+			} else {
+				log.Infof("record batch has %d records", recordBatch.NumRecords)
+				partitionResponse.ErrorCode = 0
+				partitionResponse.BaseOffset = int64(n)
 			}
-
-			log.Infof("record batch has %d records", recordBatch.NumRecords)
-			// partitionResponse := kmsg.NewProduceResponseTopicPartition()
-			// partitionResponse.Partition = partition.Partition
-			// partitionResponse.BaseOffset = 0
-			// topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
+			topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
 		}
+		response.Topics = append(response.Topics, topicResponse)
 	}
 
 	return &response, nil
