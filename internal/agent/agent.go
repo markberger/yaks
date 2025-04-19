@@ -11,7 +11,7 @@ import (
 
 type Agent struct {
 	db        *gorm.DB
-	metastore metastore.Metastore
+	Metastore metastore.Metastore
 	broker    *broker.Broker
 }
 
@@ -24,13 +24,13 @@ func NewAgent(db *gorm.DB, host string, port int32) *Agent {
 // TODO: agent should not apply migrations it should be done by a separate
 // cmd tool before deployment
 func (a *Agent) ApplyMigrations() error {
-	return a.metastore.ApplyMigrations()
+	return a.Metastore.ApplyMigrations()
 }
 
 func (a *Agent) AddHandlers() {
-	a.broker.Add(handlers.NewMetadataRequestHandler(a.broker, a.metastore))
-	a.broker.Add(handlers.NewCreateTopicsRequestHandler("s3://test-bucket", a.metastore))
-	a.broker.Add(handlers.NewProduceRequestHandler(a.metastore))
+	a.broker.Add(handlers.NewMetadataRequestHandler(a.broker, a.Metastore))
+	a.broker.Add(handlers.NewCreateTopicsRequestHandler("s3://test-bucket", a.Metastore))
+	a.broker.Add(handlers.NewProduceRequestHandler(a.Metastore))
 }
 
 func (a *Agent) ListenAndServe(ctx context.Context) {

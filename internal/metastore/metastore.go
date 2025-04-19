@@ -56,16 +56,16 @@ func (m *GormMetastore) GetTopics() ([]Topic, error) {
 
 func (m *GormMetastore) GetRecordBatches(topicName string) ([]RecordBatch, error) {
 	var recordBatches []RecordBatch
-	sql := `
-		select *
-		from record_batches rb
-		join topics t
-			on rb.topic_id = t.id
-		where t.name = $1
-	`
-	err := m.db.Raw(sql, topicName).Scan(&recordBatches).Error
+
+	err := m.db.
+		Joins("JOIN topics ON topics.id = record_batches.topic_id").
+		Where("topics.name = ?", topicName).
+		Preload("Topic"). // Preload still works after explicit join
+		Order("record_batches.start_offset asc").
+		Find(&recordBatches).Error
+
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get record batches for topic %s: %w", topicName, err)
 	}
 
 	return recordBatches, nil

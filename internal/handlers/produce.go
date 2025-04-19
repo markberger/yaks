@@ -1,20 +1,53 @@
 package handlers
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/markberger/yaks/internal/metastore"
 	log "github.com/sirupsen/logrus"
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kmsg"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 type ProduceRequestHandler struct {
-	metastore metastore.Metastore
+	metastore  metastore.Metastore
+	bucketName string
+	s3Client   *s3.Client
 }
 
 func NewProduceRequestHandler(m metastore.Metastore) *ProduceRequestHandler {
-	return &ProduceRequestHandler{m}
+	ctx := context.Background()
+	localstackEndpoint := "http://localhost:4566"
+
+	awsAccessKeyID := "test"
+	awsSecretAccessKey := "test"
+	staticCredentialsProvider := credentials.NewStaticCredentialsProvider(awsAccessKeyID, awsSecretAccessKey, "")
+
+	// Load config with handcoded creds
+	cfg, err := config.LoadDefaultConfig(ctx,
+		config.WithRegion("us-east-1"),
+		config.WithCredentialsProvider(staticCredentialsProvider),
+	)
+	if err != nil {
+		log.Fatalf("failed to load config: %v", err)
+	}
+
+	// Create s3Client. Override endpoint and force path style for Localstack
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(localstackEndpoint)
+		o.UsePathStyle = true
+	})
+
+	return &ProduceRequestHandler{m, "test-bucket", client}
 }
 func (h *ProduceRequestHandler) Key() kmsg.Key     { return kmsg.Produce }
 func (h *ProduceRequestHandler) MinVersion() int16 { return 3 }
@@ -32,18 +65,52 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	for _, topic := range request.Topics {
 		var topicResponse kmsg.ProduceResponseTopic
 		topicResponse.Topic = topic.Topic
-		for n, partition := range topic.Partitions {
+
+		for _, partition := range topic.Partitions {
 			partitionResponse := kmsg.NewProduceResponseTopicPartition()
 			partitionResponse.Partition = partition.Partition
 
+			// Parse RecordBatch
 			var recordBatch kmsg.RecordBatch
 			if err := recordBatch.ReadFrom(partition.Records); err != nil {
 				partitionResponse.ErrorCode = kerr.CorruptMessage.Code
-			} else {
-				log.Infof("record batch has %d records", recordBatch.NumRecords)
-				partitionResponse.ErrorCode = 0
-				partitionResponse.BaseOffset = int64(n)
+				topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
+				continue
 			}
+
+			// Push batch to s3
+			key := fmt.Sprintf("%s/%s.batch", topic.Topic, uuid.New().String())
+			size := int64(len(partition.Records))
+			reader := bytes.NewReader(partition.Records)
+			input := &s3.PutObjectInput{
+				Bucket:        aws.String(h.bucketName), // Use the bucket name directly
+				Key:           aws.String(key),          // object key/path
+				Body:          reader,                   // io.Reader
+				ContentLength: &size,                    // must match reader size
+				ContentType:   aws.String("application/octet-stream"),
+			}
+			_, err := h.s3Client.PutObject(context.Background(), input)
+			if err != nil {
+				return nil, err
+			}
+
+			// Register
+			batchCommitInputs := []metastore.BatchCommitInput{
+				{
+					TopicName: topic.Topic,
+					NRecords:  int64(recordBatch.NumRecords),
+					S3Path:    key,
+				},
+			}
+			batchCommitOutputs, err := h.metastore.CommitRecordBatches(batchCommitInputs)
+			if err != nil || len(batchCommitOutputs) != 1 {
+				return nil, fmt.Errorf("record commit failed: %v", err)
+			}
+
+			// Add response details
+			log.Infof("record batch has %d records", recordBatch.NumRecords)
+			partitionResponse.ErrorCode = 0
+			partitionResponse.BaseOffset = batchCommitOutputs[0].BaseOffset
 			topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
 		}
 		response.Topics = append(response.Topics, topicResponse)

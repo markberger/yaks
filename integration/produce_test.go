@@ -47,7 +47,7 @@ func (s *IntegrationTestsSuite) TestProduce() {
 func (s *IntegrationTestsSuite) TestProduceKgo() {
 	// Setup new agent, client, and test-topic
 	T := s.T()
-	s.NewAgent()
+	agent := s.NewAgent()
 	client := NewConfluentAdminClient()
 
 	ctx := context.Background()
@@ -60,6 +60,12 @@ func (s *IntegrationTestsSuite) TestProduceKgo() {
 	})
 	require.NoError(T, err)
 
+	// Confirm there are no messages in the metastore
+	batches, err := agent.Metastore.GetRecordBatches("test-topic")
+	require.NoError(T, err)
+	require.Len(T, batches, 0)
+
+	// Create kgo client and produce 1 message
 	seeds := []string{"localhost:9092"}
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(seeds...),
@@ -69,9 +75,18 @@ func (s *IntegrationTestsSuite) TestProduceKgo() {
 	}
 	defer cl.Close()
 
-	ctx = context.Background()
 	record := &kgo.Record{Topic: "test-topic", Value: []byte("bar")}
 	if err := cl.ProduceSync(ctx, record).FirstErr(); err != nil {
 		fmt.Printf("record had a produce error while synchronously producing: %v\n", err)
 	}
+
+	// Check metastore
+	batches, err = agent.Metastore.GetRecordBatches("test-topic")
+	require.NoError(T, err)
+	require.Len(T, batches, 1)
+	require.Equal(T, "test-topic", batches[0].Topic.Name)
+	require.Equal(T, int64(0), batches[0].Topic.MinOffset)
+	require.Equal(T, int64(0), batches[0].Topic.MaxOffset)
+	require.Equal(T, batches[0].StartOffset, int64(0))
+	require.Equal(T, batches[0].EndOffset, int64(0))
 }
