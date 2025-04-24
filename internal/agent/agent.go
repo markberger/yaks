@@ -31,6 +31,7 @@ func (a *Agent) AddHandlers() {
 	a.broker.Add(handlers.NewMetadataRequestHandler(a.broker, a.Metastore))
 	a.broker.Add(handlers.NewCreateTopicsRequestHandler(a.Metastore))
 	a.broker.Add(handlers.NewProduceRequestHandler(a.Metastore))
+	a.broker.Add(handlers.NewFetchRequestHandler(a.Metastore))
 }
 
 func (a *Agent) ListenAndServe(ctx context.Context) {

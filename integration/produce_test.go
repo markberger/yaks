@@ -89,4 +89,19 @@ func (s *IntegrationTestsSuite) TestProduceKgo() {
 	require.Equal(T, int64(0), batches[0].Topic.MaxOffset)
 	require.Equal(T, batches[0].StartOffset, int64(0))
 	require.Equal(T, batches[0].EndOffset, int64(0))
+
+	// Check we can fetch the message
+	cl.AddConsumePartitions(map[string]map[int32]kgo.Offset{
+		"test-topic": {
+			0: kgo.NewOffset().At(0),
+		},
+	})
+	fetches := cl.PollRecords(context.Background(), 1)
+	if errs := fetches.Errors(); len(errs) > 0 {
+		T.Errorf("Failed to fetch records: %v", errs)
+	}
+	records := fetches.Records()
+
+	require.Len(T, records, 1)
+	require.Equal(T, records[0].Value, []byte("bar"))
 }
