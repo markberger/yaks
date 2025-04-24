@@ -9,7 +9,7 @@ import (
 
 type Metastore interface {
 	ApplyMigrations() error
-	CreateTopic(name string, s3Path string) error
+	CreateTopic(name string) error
 	GetTopics() ([]Topic, error)
 	GetRecordBatches(topicName string) ([]RecordBatch, error)
 	CommitRecordBatch(topicName string, nRecords int64, s3Path string) error
@@ -33,12 +33,11 @@ func (m *GormMetastore) ApplyMigrations() error {
 	return nil
 }
 
-func (m *GormMetastore) CreateTopic(name string, s3Path string) error {
+func (m *GormMetastore) CreateTopic(name string) error {
 	topic := &Topic{
-		Name:       name,
-		S3BasePath: s3Path,
-		MinOffset:  0,
-		MaxOffset:  0,
+		Name:      name,
+		MinOffset: 0,
+		MaxOffset: 0,
 	}
 	result := m.db.Create(topic)
 	return result.Error
@@ -71,7 +70,7 @@ func (m *GormMetastore) GetRecordBatches(topicName string) ([]RecordBatch, error
 	return recordBatches, nil
 }
 
-func (m *GormMetastore) CommitRecordBatch(topicName string, nRecords int64, s3Path string) error {
+func (m *GormMetastore) CommitRecordBatch(topicName string, nRecords int64, s3Key string) error {
 	return m.db.Transaction(func(tx *gorm.DB) error {
 		sql := `
 			with topic_lookup as (
@@ -90,7 +89,7 @@ func (m *GormMetastore) CommitRecordBatch(topicName string, nRecords int64, s3Pa
 					topic_id,
 					start_offset,
 					end_offset,
-					s3_path
+					s3_key
 				) select
 					gen_random_uuid(),
 					NOW(),
@@ -106,7 +105,7 @@ func (m *GormMetastore) CommitRecordBatch(topicName string, nRecords int64, s3Pa
 						then @nRecords - 1
 						else max_offset + @nRecords
 					end,
-					@s3Path
+					@s3Key
 
 				from topic_lookup tl
 			)
@@ -125,7 +124,7 @@ func (m *GormMetastore) CommitRecordBatch(topicName string, nRecords int64, s3Pa
 		namedArgs := map[string]interface{}{
 			"topicName": topicName,
 			"nRecords":  nRecords,
-			"s3Path":    s3Path,
+			"s3Key":     s3Key,
 		}
 		result := tx.Exec(sql, namedArgs)
 		return result.Error
@@ -140,11 +139,11 @@ func (m *GormMetastore) CommitRecordBatches(batches []BatchCommitInput) ([]Batch
 	// Extract data into parallel slices
 	topicNames := make([]string, len(batches))
 	nRecords := make([]int64, len(batches))
-	s3Paths := make([]string, len(batches))
+	s3Keys := make([]string, len(batches))
 	for i, batch := range batches {
 		topicNames[i] = batch.TopicName
 		nRecords[i] = batch.NRecords
-		s3Paths[i] = batch.S3Path
+		s3Keys[i] = batch.S3Key
 	}
 
 	var results []BatchCommitOutput
@@ -156,9 +155,9 @@ func (m *GormMetastore) CommitRecordBatches(batches []BatchCommitInput) ([]Batch
 					idx - 1 AS input_idx, -- 0-based index matching original slice
 					topic_name,
 					n_record,
-					s3_path
+					s3_key
 				FROM unnest($1::text[], $2::bigint[], $3::text[])
-					 WITH ORDINALITY AS t(topic_name, n_record, s3_path, idx)
+					 WITH ORDINALITY AS t(topic_name, n_record, s3_key, idx)
 			),
 			topic_lookup AS (
 				-- Get current state of all relevant topics and lock them
@@ -178,7 +177,7 @@ func (m *GormMetastore) CommitRecordBatches(batches []BatchCommitInput) ([]Batch
 					inp.input_idx,
 					inp.topic_name,
 					inp.n_record AS n_records, -- Alias for clarity
-					inp.s3_path,
+					inp.s3_key,
 					tl.id AS topic_id,
 					-- Sum records for the same topic from preceding input rows (ordered by input index)
 					COALESCE(SUM(inp.n_record) OVER (PARTITION BY tl.id ORDER BY inp.input_idx ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS preceding_records_in_batch,
@@ -190,7 +189,7 @@ func (m *GormMetastore) CommitRecordBatches(batches []BatchCommitInput) ([]Batch
 			new_batches_insert AS (
 				-- Insert the new batches with calculated offsets
 				INSERT INTO record_batches (
-					id, created_at, updated_at, topic_id, start_offset, end_offset, s3_path
+					id, created_at, updated_at, topic_id, start_offset, end_offset, s3_key
 				)
 				SELECT
 					gen_random_uuid(),
@@ -209,10 +208,10 @@ func (m *GormMetastore) CommitRecordBatches(batches []BatchCommitInput) ([]Batch
 						THEN oc.preceding_records_in_batch + oc.n_records - 1
 						ELSE oc.initial_topic_max_offset + 1 + oc.preceding_records_in_batch + oc.n_records - 1
 					END AS end_offset,
-					oc.s3_path
+					oc.s3_key
 				FROM offset_calculations oc
 				-- ORDER BY oc.input_idx -- Optional: Ensures insert order matches input if needed
-				RETURNING id, topic_id, start_offset, end_offset, s3_path -- Also return end_offset
+				RETURNING id, topic_id, start_offset, end_offset, s3_key -- Also return end_offset
 			),
 			topic_final_offsets AS (
 				-- Find the maximum end_offset achieved for each topic in this batch insert
@@ -233,24 +232,20 @@ func (m *GormMetastore) CommitRecordBatches(batches []BatchCommitInput) ([]Batch
 			)
 			-- Final SELECT to retrieve the required output, joining inserted data back to calculations
 			SELECT
-				oc.input_idx,
-				nb.start_offset,
-				nb.s3_path
+				oc.input_idx,         -- Matches InputIndex (via input_idx)
+				nb.start_offset AS base_offset, -- Alias start_offset to match BaseOffset struct field
+				oc.s3_key             -- Matches S3Key (via s3_key)
 			FROM new_batches_insert nb
-			JOIN offset_calculations oc ON nb.topic_id = oc.topic_id AND nb.start_offset = (
-				 -- Re-calculate start offset exactly as done in the INSERT to ensure a correct join key
-				 CASE
-					WHEN oc.initial_topic_min_offset = 0 AND oc.initial_topic_max_offset = 0 THEN oc.preceding_records_in_batch
-					ELSE oc.initial_topic_max_offset + 1 + oc.preceding_records_in_batch
-				 END
-			) AND nb.s3_path = oc.s3_path -- Assumes this combination is unique enough within the batch for joining
+			JOIN offset_calculations oc
+			  ON nb.topic_id = oc.topic_id
+			 AND nb.s3_key = oc.s3_key -- Join using topic_id and s3_key (assuming this combo is unique within the batch)
 			ORDER BY oc.input_idx; -- Return results in the original input order
 		`
 
 		err := tx.Raw(sqlQuery,
 			pq.Array(topicNames),
 			pq.Array(nRecords),
-			pq.Array(s3Paths),
+			pq.Array(s3Keys),
 		).Scan(&results).Error
 
 		return err

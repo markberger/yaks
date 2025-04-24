@@ -11,7 +11,7 @@ import (
 
 func (s *HandlersTestSuite) TestCreateTopicsHandlerSuccess() {
 	metastore := s.TestDB.InitMetastore()
-	handler := NewCreateTopicsRequestHandler("s3://test-bucket/", metastore)
+	handler := NewCreateTopicsRequestHandler(metastore)
 
 	// When the handler receives a request to create a topic but there is an error
 	request := kmsg.NewCreateTopicsRequest()
@@ -38,14 +38,14 @@ type mockMetastoreCreateTopicFails struct {
 	metastore.GormMetastore
 }
 
-func (*mockMetastoreCreateTopicFails) CreateTopic(name string, s3Path string) error {
+func (*mockMetastoreCreateTopicFails) CreateTopic(name string) error {
 	return errors.New("create topic failed")
 }
 
 func (s *HandlersTestSuite) TestCreateTopicsHandlerFails() {
 	wrappedMetastore := s.TestDB.InitMetastore()
 	metastore := &mockMetastoreCreateTopicFails{*wrappedMetastore}
-	handler := NewCreateTopicsRequestHandler("s3://test-bucket/", metastore)
+	handler := NewCreateTopicsRequestHandler(metastore)
 
 	// When the handler receives a request to create a topic but there is an error
 	request := kmsg.NewCreateTopicsRequest()

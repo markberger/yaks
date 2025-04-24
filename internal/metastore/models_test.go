@@ -18,20 +18,18 @@ func (s *MetastoreTestSuite) TestTopicModel() {
 		{
 			name: "valid topic",
 			topic: &Topic{
-				Name:       "test-topic",
-				S3BasePath: "s3://bucket/test-topic",
-				MinOffset:  0,
-				MaxOffset:  100,
+				Name:      "test-topic",
+				MinOffset: 0,
+				MaxOffset: 100,
 			},
 			wantErr: false,
 		},
 		{
 			name: "invalid offset",
 			topic: &Topic{
-				Name:       "invalid-topic",
-				S3BasePath: "s3://bucket/invalid-topic",
-				MinOffset:  100,
-				MaxOffset:  0, // Invalid: max < min
+				Name:      "invalid-topic",
+				MinOffset: 100,
+				MaxOffset: 0, // Invalid: max < min
 			},
 			wantErr: true,
 		},
@@ -53,7 +51,6 @@ func (s *MetastoreTestSuite) TestTopicModel() {
 				err := db.First(&found, "id = ?", tt.topic.ID).Error
 				assert.NoError(t, err)
 				assert.Equal(t, tt.topic.Name, found.Name)
-				assert.Equal(t, tt.topic.S3BasePath, found.S3BasePath)
 				assert.Equal(t, tt.topic.MinOffset, found.MinOffset)
 				assert.Equal(t, tt.topic.MaxOffset, found.MaxOffset)
 			}
@@ -67,10 +64,9 @@ func (s *MetastoreTestSuite) TestRecordBatchModel() {
 
 	// Create a topic first
 	topic := &Topic{
-		Name:       "test-topic",
-		S3BasePath: "s3://bucket/test-topic",
-		MinOffset:  0,
-		MaxOffset:  1000,
+		Name:      "test-topic",
+		MinOffset: 0,
+		MaxOffset: 1000,
 	}
 	assert.NoError(s.T(), db.Create(topic).Error)
 
@@ -85,7 +81,7 @@ func (s *MetastoreTestSuite) TestRecordBatchModel() {
 				Topic:       *topic,
 				StartOffset: 0,
 				EndOffset:   100,
-				S3Path:      "s3://bucket/test-topic/0-100",
+				S3Key:       "test-topic/0-100",
 			},
 			wantErr: false,
 		},
@@ -95,7 +91,7 @@ func (s *MetastoreTestSuite) TestRecordBatchModel() {
 				Topic:       *topic,
 				StartOffset: 100,
 				EndOffset:   0, // Invalid: end < start
-				S3Path:      "s3://bucket/test-topic/100-0",
+				S3Key:       "test-topic/100-0",
 			},
 			wantErr: true,
 		},
@@ -116,7 +112,7 @@ func (s *MetastoreTestSuite) TestRecordBatchModel() {
 				var found RecordBatch
 				err := db.Preload("Topic").First(&found, "id = ?", tt.batch.ID).Error
 				assert.NoError(t, err)
-				assert.Equal(t, tt.batch.S3Path, found.S3Path)
+				assert.Equal(t, tt.batch.S3Key, found.S3Key)
 				assert.Equal(t, tt.batch.StartOffset, found.StartOffset)
 				assert.Equal(t, tt.batch.EndOffset, found.EndOffset)
 				assert.Equal(t, topic.ID, found.Topic.ID)

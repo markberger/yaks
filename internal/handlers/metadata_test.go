@@ -8,7 +8,7 @@ import (
 
 func (s *HandlersTestSuite) TestMetadataRequestHandler() {
 	metastore := s.TestDB.InitMetastore()
-	metastore.CreateTopic("test-topic", "s3://test-bucket/")
+	metastore.CreateTopic("test-topic")
 	broker := broker.NewBroker(1, "localhost", 9092)
 	handler := NewMetadataRequestHandler(broker, metastore)
 

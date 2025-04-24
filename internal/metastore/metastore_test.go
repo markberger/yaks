@@ -9,22 +9,20 @@ func (s *MetastoreTestSuite) TestCreateTopic() {
 	metastore := s.TestDB.InitMetastore()
 
 	topicName := "test-topic"
-	s3Path := "s3://some-bucket/topics/test-topic"
-	err := metastore.CreateTopic(topicName, s3Path)
+	err := metastore.CreateTopic(topicName)
 	require.NoError(s.T(), err)
 
 	topics, err := metastore.GetTopics()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), len(topics), 1)
 	assert.Equal(s.T(), topics[0].Name, topicName)
-	assert.Equal(s.T(), topics[0].S3BasePath, s3Path)
 	assert.Equal(s.T(), topics[0].MinOffset, int64(0))
 	assert.Equal(s.T(), topics[0].MaxOffset, int64(0))
 }
 
 func (s *MetastoreTestSuite) TestCommitRecordBatch() {
 	metastore := s.TestDB.InitMetastore()
-	err := metastore.CreateTopic("test-topic", "s3://some-bucket/topics/test-topic")
+	err := metastore.CreateTopic("test-topic")
 	require.NoError(s.T(), err)
 
 	err = metastore.CommitRecordBatch("test-topic", 10, "s3://some-bucket/topics/test-topic/randomHash.batch")
@@ -84,21 +82,19 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	// --- Setup for subsequent scenarios ---
 	topic1Name := "batch-topic-1"
 	topic2Name := "batch-topic-2"
-	s3Base1 := "s3://b/t1"
-	s3Base2 := "s3://b/t2"
-	require.NoError(T, metastore.CreateTopic(topic1Name, s3Base1))
-	require.NoError(T, metastore.CreateTopic(topic2Name, s3Base2))
+	require.NoError(T, metastore.CreateTopic(topic1Name))
+	require.NoError(T, metastore.CreateTopic(topic2Name))
 
 	// --- Scenario 2: Single Batch (New Topic State) ---
 	batchInput1 := []BatchCommitInput{
-		{TopicName: topic1Name, NRecords: 10, S3Path: s3Base1 + "/b1.batch"},
+		{TopicName: topic1Name, NRecords: 10, S3Key: "topics/" + topic1Name + "/b1.batch"},
 	}
 	results, err = metastore.CommitRecordBatches(batchInput1)
 	require.NoError(T, err, "Single batch (new topic) failed")
 	require.Len(T, results, 1)
 	assert.Equal(T, 0, results[0].InputIndex, "Single batch index mismatch")
 	assert.Equal(T, int64(0), results[0].BaseOffset, "Single batch (new topic) base offset mismatch")
-	assert.Equal(T, batchInput1[0].S3Path, results[0].S3Path, "Single batch S3 path mismatch")
+	assert.Equal(T, batchInput1[0].S3Key, results[0].S3Key, "Single batch S3 path mismatch")
 
 	// Verify topic 1 state
 	topics, _ := metastore.GetTopics()
@@ -110,18 +106,18 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	require.Len(T, rbatches, 1)
 	assert.Equal(T, int64(0), rbatches[0].StartOffset)
 	assert.Equal(T, int64(9), rbatches[0].EndOffset)
-	assert.Equal(T, batchInput1[0].S3Path, rbatches[0].S3Path)
+	assert.Equal(T, batchInput1[0].S3Key, rbatches[0].S3Key)
 
 	// --- Scenario 3: Single Batch (Existing Topic State) ---
 	batchInput2 := []BatchCommitInput{
-		{TopicName: topic1Name, NRecords: 5, S3Path: s3Base1 + "/b2.batch"},
+		{TopicName: topic1Name, NRecords: 5, S3Key: "topics/" + topic1Name + "/b2.batch"},
 	}
 	results, err = metastore.CommitRecordBatches(batchInput2)
 	require.NoError(T, err, "Single batch (existing topic) failed")
 	require.Len(T, results, 1)
 	assert.Equal(T, 0, results[0].InputIndex)
 	assert.Equal(T, int64(10), results[0].BaseOffset, "Single batch (existing topic) base offset mismatch") // 9 + 1
-	assert.Equal(T, batchInput2[0].S3Path, results[0].S3Path)
+	assert.Equal(T, batchInput2[0].S3Key, results[0].S3Key)
 
 	// Verify topic 1 state
 	topics, _ = metastore.GetTopics()
@@ -131,15 +127,15 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	// Verify record batch 2 state
 	rbatches, _ = metastore.GetRecordBatches(topic1Name)
 	require.Len(T, rbatches, 2)
-	batch2 := findBatchByS3(rbatches, batchInput2[0].S3Path)
+	batch2 := findBatchByS3(rbatches, batchInput2[0].S3Key)
 	require.NotNil(T, batch2)
 	assert.Equal(T, int64(10), batch2.StartOffset)
 	assert.Equal(T, int64(14), batch2.EndOffset)
 
 	// --- Scenario 4: Multiple Batches (Same Topic) ---
 	batchInput3 := []BatchCommitInput{
-		{TopicName: topic1Name, NRecords: 3, S3Path: s3Base1 + "/b3.batch"}, // Expected base: 15
-		{TopicName: topic1Name, NRecords: 7, S3Path: s3Base1 + "/b4.batch"}, // Expected base: 18 (15+3)
+		{TopicName: topic1Name, NRecords: 3, S3Key: "topics/" + topic1Name + "/b3.batch"}, // Expected base: 15
+		{TopicName: topic1Name, NRecords: 7, S3Key: "topics/" + topic1Name + "/b4.batch"}, // Expected base: 18 (15+3)
 	}
 	results, err = metastore.CommitRecordBatches(batchInput3)
 	require.NoError(T, err, "Multi batch (same topic) failed")
@@ -147,11 +143,11 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	// Check first result
 	assert.Equal(T, 0, results[0].InputIndex)
 	assert.Equal(T, int64(15), results[0].BaseOffset, "Multi batch (same topic) base offset 1 mismatch") // 14 + 1
-	assert.Equal(T, batchInput3[0].S3Path, results[0].S3Path)
+	assert.Equal(T, batchInput3[0].S3Key, results[0].S3Key)
 	// Check second result
 	assert.Equal(T, 1, results[1].InputIndex)
 	assert.Equal(T, int64(18), results[1].BaseOffset, "Multi batch (same topic) base offset 2 mismatch") // 15 + 3
-	assert.Equal(T, batchInput3[1].S3Path, results[1].S3Path)
+	assert.Equal(T, batchInput3[1].S3Key, results[1].S3Key)
 
 	// Verify topic 1 state
 	topics, _ = metastore.GetTopics()
@@ -161,8 +157,8 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	// Verify record batches 3 & 4 state
 	rbatches, _ = metastore.GetRecordBatches(topic1Name)
 	require.Len(T, rbatches, 4)
-	batch3 := findBatchByS3(rbatches, batchInput3[0].S3Path)
-	batch4 := findBatchByS3(rbatches, batchInput3[1].S3Path)
+	batch3 := findBatchByS3(rbatches, batchInput3[0].S3Key)
+	batch4 := findBatchByS3(rbatches, batchInput3[1].S3Key)
 	require.NotNil(T, batch3)
 	require.NotNil(T, batch4)
 	assert.Equal(T, int64(15), batch3.StartOffset)
@@ -174,9 +170,9 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	// Topic 1 MaxOffset: 24
 	// Topic 2 MaxOffset: 0 (initial state)
 	batchInput4 := []BatchCommitInput{
-		{TopicName: topic2Name, NRecords: 8, S3Path: s3Base2 + "/b1.batch"}, // Expected base: 0
-		{TopicName: topic1Name, NRecords: 6, S3Path: s3Base1 + "/b5.batch"}, // Expected base: 25 (24+1)
-		{TopicName: topic2Name, NRecords: 4, S3Path: s3Base2 + "/b2.batch"}, // Expected base: 8 (0+8)
+		{TopicName: topic2Name, NRecords: 8, S3Key: "topics/" + topic2Name + "/b1.batch"}, // Expected base: 0
+		{TopicName: topic1Name, NRecords: 6, S3Key: "topics/" + topic1Name + "/b5.batch"}, // Expected base: 25 (24+1)
+		{TopicName: topic2Name, NRecords: 4, S3Key: "topics/" + topic2Name + "/b2.batch"}, // Expected base: 8 (0+8)
 	}
 	results, err = metastore.CommitRecordBatches(batchInput4)
 	require.NoError(T, err, "Multi batch (diff topics) failed")
@@ -184,15 +180,15 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	// Check results (order matters)
 	assert.Equal(T, 0, results[0].InputIndex) // topic2, batch 1
 	assert.Equal(T, int64(0), results[0].BaseOffset)
-	assert.Equal(T, batchInput4[0].S3Path, results[0].S3Path)
+	assert.Equal(T, batchInput4[0].S3Key, results[0].S3Key)
 
 	assert.Equal(T, 1, results[1].InputIndex)         // topic1, batch 5
 	assert.Equal(T, int64(25), results[1].BaseOffset) // 24 + 1
-	assert.Equal(T, batchInput4[1].S3Path, results[1].S3Path)
+	assert.Equal(T, batchInput4[1].S3Key, results[1].S3Key)
 
 	assert.Equal(T, 2, results[2].InputIndex)        // topic2, batch 2
 	assert.Equal(T, int64(8), results[2].BaseOffset) // 0 + 8 (from first batch in this call)
-	assert.Equal(T, batchInput4[2].S3Path, results[2].S3Path)
+	assert.Equal(T, batchInput4[2].S3Key, results[2].S3Key)
 
 	// Verify topic 1 state
 	topics, _ = metastore.GetTopics()
@@ -208,7 +204,7 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	// Verify record batches state for topic 1
 	rbatches1, _ := metastore.GetRecordBatches(topic1Name)
 	require.Len(T, rbatches1, 5)
-	batch5 := findBatchByS3(rbatches1, batchInput4[1].S3Path)
+	batch5 := findBatchByS3(rbatches1, batchInput4[1].S3Key)
 	require.NotNil(T, batch5)
 	assert.Equal(T, int64(25), batch5.StartOffset)
 	assert.Equal(T, int64(30), batch5.EndOffset)
@@ -216,8 +212,8 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	// Verify record batches state for topic 2
 	rbatches2, _ := metastore.GetRecordBatches(topic2Name)
 	require.Len(T, rbatches2, 2)
-	batchT2_1 := findBatchByS3(rbatches2, batchInput4[0].S3Path)
-	batchT2_2 := findBatchByS3(rbatches2, batchInput4[2].S3Path)
+	batchT2_1 := findBatchByS3(rbatches2, batchInput4[0].S3Key)
+	batchT2_2 := findBatchByS3(rbatches2, batchInput4[2].S3Key)
 	require.NotNil(T, batchT2_1)
 	require.NotNil(T, batchT2_2)
 	assert.Equal(T, int64(0), batchT2_1.StartOffset)
@@ -239,7 +235,7 @@ func findTopic(topics []Topic, name string) *Topic {
 // Helper function to find a record batch by S3 path
 func findBatchByS3(batches []RecordBatch, s3Path string) *RecordBatch {
 	for i := range batches {
-		if batches[i].S3Path == s3Path {
+		if batches[i].S3Key == s3Path {
 			return &batches[i]
 		}
 	}

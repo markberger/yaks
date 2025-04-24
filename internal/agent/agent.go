@@ -29,7 +29,7 @@ func (a *Agent) ApplyMigrations() error {
 
 func (a *Agent) AddHandlers() {
 	a.broker.Add(handlers.NewMetadataRequestHandler(a.broker, a.Metastore))
-	a.broker.Add(handlers.NewCreateTopicsRequestHandler("s3://test-bucket", a.Metastore))
+	a.broker.Add(handlers.NewCreateTopicsRequestHandler(a.Metastore))
 	a.broker.Add(handlers.NewProduceRequestHandler(a.Metastore))
 }
 

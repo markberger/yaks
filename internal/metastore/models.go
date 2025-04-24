@@ -17,10 +17,9 @@ type BaseModel struct {
 // Represents a kafka topic
 type Topic struct {
 	BaseModel
-	Name       string `gorm:"size:255; not null; index"`
-	S3BasePath string `gorm:"size:255; not null"`
-	MinOffset  int64  `gorm:"type:bigint; not null; check:min_offset >= 0"`
-	MaxOffset  int64  `gorm:"type:bigint; not null; check:max_offset >= 0; check:max_offset >= min_offset"`
+	Name      string `gorm:"size:255; not null; index"`
+	MinOffset int64  `gorm:"type:bigint; not null; check:min_offset >= 0"`
+	MaxOffset int64  `gorm:"type:bigint; not null; check:max_offset >= 0; check:max_offset >= min_offset"`
 }
 
 // A record batch represents a contiguous group of kafka messages
@@ -30,19 +29,19 @@ type RecordBatch struct {
 	Topic       Topic     `gorm:"foreignKey:TopicID"`
 	StartOffset int64     `gorm:"type:bigint; not null; check:start_offset >= 0"`
 	EndOffset   int64     `gorm:"type:bigint; not null; check:end_offset >= 0; check:end_offset >= start_offset"`
-	S3Path      string    `gorm:"size:255; not null"`
+	S3Key       string    `gorm:"size:255; not null"`
 }
 
 // Input structure for a single batch commit request within the batch operation
 type BatchCommitInput struct {
 	TopicName string
 	NRecords  int64
-	S3Path    string
+	S3Key     string
 }
 
 // Output structure containing the result for a single committed batch
 type BatchCommitOutput struct {
 	InputIndex int    `gorm:"column:input_idx"`
-	BaseOffset int64  `gorm:"column:start_offset"`
-	S3Path     string `gorm:"column:s3_path"`
+	BaseOffset int64  `gorm:"column:base_offset"` // Match the alias used in the SQL query
+	S3Key      string `gorm:"column:s3_key"`      // Change expected column name to s3_key
 }

@@ -79,7 +79,8 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 			}
 
 			// Push batch to s3
-			key := fmt.Sprintf("%s/%s.batch", topic.Topic, uuid.New().String())
+			// TODO: add date partition
+			key := fmt.Sprintf("topics/%s/%s.batch", topic.Topic, uuid.New().String())
 			size := int64(len(partition.Records))
 			reader := bytes.NewReader(partition.Records)
 			input := &s3.PutObjectInput{
@@ -99,7 +100,7 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 				{
 					TopicName: topic.Topic,
 					NRecords:  int64(recordBatch.NumRecords),
-					S3Path:    key,
+					S3Key:     key,
 				},
 			}
 			batchCommitOutputs, err := h.metastore.CommitRecordBatches(batchCommitInputs)
