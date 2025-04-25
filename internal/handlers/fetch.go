@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"context"
-	"fmt"
+	"encoding/binary"
 	"io"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -104,16 +104,9 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 			log.Fatalf("failed to read object body, %v", err)
 		}
 
-		batch := kmsg.NewRecordBatch()
-		if err := batch.ReadFrom(data); err != nil {
-			return nil, fmt.Errorf("failed to parse RecordBatch: %v", err)
-		}
-		batch.FirstOffset = metadata.StartOffset
-		// TODO: this is more efficient if it works
-		// Set StartOffset for consumer
-		// data[0:8] = binary.BigEndian.Uint64(batch)
-
-		recordBatches = batch.AppendTo(recordBatches)
+		// Set RecordBatch.FirstOffset for consumer
+		binary.BigEndian.PutUint64(data, uint64((metadata.StartOffset)))
+		recordBatches = append(recordBatches, data...)
 	}
 	responsePartition.RecordBatches = recordBatches
 	responseTopic.Partitions = append(responseTopic.Partitions, responsePartition)
