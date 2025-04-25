@@ -22,12 +22,12 @@ go test ./...
 
 ```
 .
-├── bin/
-│   ├── agent.go    # run yaks-agent
-│   └── migrator.go # apply db migrations
+├── cmd/
+│   ├── agent        # run yaks-agent
+│   └── migrator     # apply db migrations
 └── internal/
-    ├── api/         # kafka api logic + serialization
     ├── agent/       # yaks-agent
+    ├── api/         # kafka api logic + serialization
     ├── broker/      # generic kafka broker implementation
     ├── handlers/    # kafka request handlers
     └── metastore/   # store metadata in postgres
