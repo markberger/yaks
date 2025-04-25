@@ -70,6 +70,41 @@ func (s *MetastoreTestSuite) TestCommitRecordBatch() {
 	}
 }
 
+func (s *MetastoreTestSuite) TestCommitRecordBatches2() {
+	// When we have a new topic
+	metastore := s.TestDB.InitMetastore()
+	T := s.T()
+	topic1Name := "batch-topic-1"
+	require.NoError(T, metastore.CreateTopic(topic1Name))
+
+	// And we send a single message to commit
+	batchInput1 := []BatchCommitInput{
+		{TopicName: topic1Name, NRecords: 1, S3Key: "topics/" + topic1Name + "/b1.batch"},
+	}
+	_, err := metastore.CommitRecordBatches(batchInput1)
+	require.NoError(T, err, "Single batch (new topic) failed")
+
+	// Then we should have 1 RecordBatch with StartOffset=0 and EndOffset=0
+	rbatches, _ := metastore.GetRecordBatches(topic1Name)
+	require.Len(T, rbatches, 1)
+	require.Equal(T, rbatches[0].StartOffset, int64(0))
+	require.Equal(T, rbatches[0].EndOffset, int64(0))
+
+	// When we commit another batch of messages
+	batchInput2 := []BatchCommitInput{
+		{TopicName: topic1Name, NRecords: 1, S3Key: "topics/" + topic1Name + "/b2.batch"},
+	}
+	_, err = metastore.CommitRecordBatches(batchInput2)
+	require.NoError(T, err, "Single batch (new topic) failed")
+
+	// Then we should have a second RecordBatch with StartOffset=1 EndOffset=1
+	rbatches, _ = metastore.GetRecordBatches(topic1Name)
+	require.Len(T, rbatches, 2)
+	require.Equal(T, rbatches[1].StartOffset, int64(1))
+	require.Equal(T, rbatches[1].EndOffset, int64(1))
+
+}
+
 func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	metastore := s.TestDB.InitMetastore()
 	T := s.T() // Alias for convenience
@@ -101,6 +136,7 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	topic1 := findTopic(topics, topic1Name)
 	require.NotNil(T, topic1, "Topic 1 not found after single batch")
 	assert.Equal(T, int64(9), topic1.MaxOffset, "Topic 1 MaxOffset after single batch")
+
 	// Verify record batch 1 state
 	rbatches, _ := metastore.GetRecordBatches(topic1Name)
 	require.Len(T, rbatches, 1)
@@ -124,6 +160,7 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	topic1 = findTopic(topics, topic1Name)
 	require.NotNil(T, topic1)
 	assert.Equal(T, int64(14), topic1.MaxOffset, "Topic 1 MaxOffset after second single batch") // 9 + 5
+
 	// Verify record batch 2 state
 	rbatches, _ = metastore.GetRecordBatches(topic1Name)
 	require.Len(T, rbatches, 2)
@@ -140,10 +177,12 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	results, err = metastore.CommitRecordBatches(batchInput3)
 	require.NoError(T, err, "Multi batch (same topic) failed")
 	require.Len(T, results, 2)
+
 	// Check first result
 	assert.Equal(T, 0, results[0].InputIndex)
 	assert.Equal(T, int64(15), results[0].BaseOffset, "Multi batch (same topic) base offset 1 mismatch") // 14 + 1
 	assert.Equal(T, batchInput3[0].S3Key, results[0].S3Key)
+
 	// Check second result
 	assert.Equal(T, 1, results[1].InputIndex)
 	assert.Equal(T, int64(18), results[1].BaseOffset, "Multi batch (same topic) base offset 2 mismatch") // 15 + 3
@@ -154,6 +193,7 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	topic1 = findTopic(topics, topic1Name)
 	require.NotNil(T, topic1)
 	assert.Equal(T, int64(24), topic1.MaxOffset, "Topic 1 MaxOffset after multi batch") // 14 + 3 + 7
+
 	// Verify record batches 3 & 4 state
 	rbatches, _ = metastore.GetRecordBatches(topic1Name)
 	require.Len(T, rbatches, 4)
@@ -177,6 +217,7 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	results, err = metastore.CommitRecordBatches(batchInput4)
 	require.NoError(T, err, "Multi batch (diff topics) failed")
 	require.Len(T, results, 3)
+
 	// Check results (order matters)
 	assert.Equal(T, 0, results[0].InputIndex) // topic2, batch 1
 	assert.Equal(T, int64(0), results[0].BaseOffset)

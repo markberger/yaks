@@ -165,7 +165,8 @@ func (m *GormMetastore) CommitRecordBatches(batches []BatchCommitInput) ([]Batch
 					t.id,
 					t.name,
 					t.min_offset,
-					t.max_offset
+					t.max_offset,
+					EXISTS (SELECT 1 FROM record_batches WHERE topic_id = t.id LIMIT 1) AS has_batches
 				FROM topics t
 				JOIN (SELECT DISTINCT topic_name FROM input_data) AS needed_topics
 				  ON t.name = needed_topics.topic_name
@@ -182,7 +183,8 @@ func (m *GormMetastore) CommitRecordBatches(batches []BatchCommitInput) ([]Batch
 					-- Sum records for the same topic from preceding input rows (ordered by input index)
 					COALESCE(SUM(inp.n_record) OVER (PARTITION BY tl.id ORDER BY inp.input_idx ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS preceding_records_in_batch,
 					tl.max_offset AS initial_topic_max_offset,
-					tl.min_offset AS initial_topic_min_offset
+					tl.min_offset AS initial_topic_min_offset,
+					tl.has_batches AS has_batches
 				FROM input_data inp
 				JOIN topic_lookup tl ON inp.topic_name = tl.name
 			),
@@ -197,17 +199,9 @@ func (m *GormMetastore) CommitRecordBatches(batches []BatchCommitInput) ([]Batch
 					NOW(),
 					oc.topic_id,
 					-- Calculate start_offset (handle initial state)
-					CASE
-						WHEN oc.initial_topic_min_offset = 0 AND oc.initial_topic_max_offset = 0
-						THEN oc.preceding_records_in_batch
-						ELSE oc.initial_topic_max_offset + 1 + oc.preceding_records_in_batch
-					END AS start_offset,
-					-- Calculate end_offset (handle initial state)
-					CASE
-						WHEN oc.initial_topic_min_offset = 0 AND oc.initial_topic_max_offset = 0
-						THEN oc.preceding_records_in_batch + oc.n_records - 1
-						ELSE oc.initial_topic_max_offset + 1 + oc.preceding_records_in_batch + oc.n_records - 1
-					END AS end_offset,
+					(oc.initial_topic_max_offset + oc.preceding_records_in_batch + CASE WHEN oc.has_batches THEN 1 ELSE 0 END) AS start_offset,
+					-- Calculate end_offset
+					(oc.initial_topic_max_offset + oc.preceding_records_in_batch + CASE WHEN oc.has_batches THEN 1 ELSE 0 END) + oc.n_records - 1 AS end_offset,
 					oc.s3_key
 				FROM offset_calculations oc
 				-- ORDER BY oc.input_idx -- Optional: Ensures insert order matches input if needed
@@ -232,9 +226,9 @@ func (m *GormMetastore) CommitRecordBatches(batches []BatchCommitInput) ([]Batch
 			)
 			-- Final SELECT to retrieve the required output, joining inserted data back to calculations
 			SELECT
-				oc.input_idx,         -- Matches InputIndex (via input_idx)
-				nb.start_offset AS base_offset, -- Alias start_offset to match BaseOffset struct field
-				oc.s3_key             -- Matches S3Key (via s3_key)
+				oc.input_idx AS input_idx,         -- Matches InputIndex (via input_idx)
+				nb.start_offset AS base_offset,    -- Alias start_offset to match BaseOffset struct field
+				nb.s3_key AS s3_key                -- Explicitly use nb.s3_key to match struct and avoid ambiguity
 			FROM new_batches_insert nb
 			JOIN offset_calculations oc
 			  ON nb.topic_id = oc.topic_id
