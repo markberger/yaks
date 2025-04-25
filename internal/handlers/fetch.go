@@ -56,7 +56,10 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	response.SetVersion(request.GetVersion())
 	response.ThrottleMillis = 0
 
-	var batchToReturn metastore.RecordBatch
+	// Identify all S3 files to download
+	// TODO: pass fetch offset to GetRecordBatches
+	// TODO: respect byte size cuttoff when returning responses
+	var batchesMetadata []metastore.RecordBatch
 	for _, t := range request.Topics {
 		for _, p := range t.Partitions {
 			recordBatches, err := h.metastore.GetRecordBatches(t.Topic)
@@ -65,45 +68,55 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 			}
 
 			for _, b := range recordBatches {
-				if b.StartOffset <= p.FetchOffset && p.FetchOffset <= b.StartOffset+b.EndOffset {
-					batchToReturn = b
-					break
+				if p.FetchOffset > b.EndOffset {
+					continue
 				}
+
+				batchesMetadata = append(batchesMetadata, b)
 			}
 		}
+
+		// TODO: support multiple topics
 		break
 	}
 
-	// Download the object
-	resp, err := h.s3Client.GetObject(context.Background(), &s3.GetObjectInput{
-		Bucket: h.bucketName,
-		Key:    &batchToReturn.S3Key,
-	})
-	if err != nil {
-		log.Fatalf("failed to GetObject, %v", err)
-	}
-	defer resp.Body.Close()
-
-	// Read the full object into memory
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalf("failed to read object body, %v", err)
-	}
-
-	batch := kmsg.NewRecordBatch()
-	if err := batch.ReadFrom(data); err != nil {
-		return nil, fmt.Errorf("failed to parse RecordBatch: %v", err)
-	}
-	batch.FirstOffset = batchToReturn.StartOffset
-
+	// TODO: support multiple topics
 	responseTopic := kmsg.NewFetchResponseTopic()
 	responseTopic.Topic = request.Topics[0].Topic
 	responsePartition := kmsg.NewFetchResponseTopicPartition()
 	responsePartition.Partition = 0
 	responsePartition.ErrorCode = 0
-	responsePartition.RecordBatches = batch.AppendTo(responsePartition.RecordBatches)
+
+	var recordBatches []byte
+	for _, metadata := range batchesMetadata {
+		// Download the object and read into memory
+		resp, err := h.s3Client.GetObject(context.Background(), &s3.GetObjectInput{
+			Bucket: h.bucketName,
+			Key:    &metadata.S3Key,
+		})
+		if err != nil {
+			log.Fatalf("failed to GetObject, %v", err)
+		}
+		defer resp.Body.Close()
+
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Fatalf("failed to read object body, %v", err)
+		}
+
+		batch := kmsg.NewRecordBatch()
+		if err := batch.ReadFrom(data); err != nil {
+			return nil, fmt.Errorf("failed to parse RecordBatch: %v", err)
+		}
+		batch.FirstOffset = metadata.StartOffset
+		// TODO: this is more efficient if it works
+		// Set StartOffset for consumer
+		// data[0:8] = binary.BigEndian.Uint64(batch)
+
+		recordBatches = batch.AppendTo(recordBatches)
+	}
+	responsePartition.RecordBatches = recordBatches
 	responseTopic.Partitions = append(responseTopic.Partitions, responsePartition)
 	response.Topics = append(response.Topics, responseTopic)
-
 	return &response, nil
 }

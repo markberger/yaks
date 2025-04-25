@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"fmt"
 
 	ckafka "github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/stretchr/testify/require"
@@ -77,7 +76,7 @@ func (s *IntegrationTestsSuite) TestProduceKgo() {
 
 	record := &kgo.Record{Topic: "test-topic", Value: []byte("bar")}
 	if err := cl.ProduceSync(ctx, record).FirstErr(); err != nil {
-		fmt.Printf("record had a produce error while synchronously producing: %v\n", err)
+		T.Fatalf("record had a produce error while synchronously producing: %v\n", err)
 	}
 
 	// Check metastore
@@ -90,18 +89,33 @@ func (s *IntegrationTestsSuite) TestProduceKgo() {
 	require.Equal(T, batches[0].StartOffset, int64(0))
 	require.Equal(T, batches[0].EndOffset, int64(0))
 
-	// Check we can fetch the message
+	// Produce another message so that we have two RecordBatches
+	record = &kgo.Record{Topic: "test-topic", Value: []byte("foo")}
+	if err := cl.ProduceSync(ctx, record).FirstErr(); err != nil {
+		T.Fatalf("record had a produce error while synchronously producing: %v\n", err)
+	}
+
+	batches, err = agent.Metastore.GetRecordBatches("test-topic")
+	require.NoError(T, err)
+	require.Len(T, batches, 2)
+	require.Equal(T, batches[0].StartOffset, int64(0))
+	require.Equal(T, batches[0].EndOffset, int64(0))
+	require.Equal(T, batches[1].StartOffset, int64(1))
+	require.Equal(T, batches[1].EndOffset, int64(1))
+
+	// Check we can fetch the messages
 	cl.AddConsumePartitions(map[string]map[int32]kgo.Offset{
 		"test-topic": {
 			0: kgo.NewOffset().At(0),
 		},
 	})
-	fetches := cl.PollRecords(context.Background(), 1)
+	fetches := cl.PollRecords(context.Background(), 10)
 	if errs := fetches.Errors(); len(errs) > 0 {
 		T.Errorf("Failed to fetch records: %v", errs)
 	}
 	records := fetches.Records()
 
-	require.Len(T, records, 1)
+	require.Len(T, records, 2)
 	require.Equal(T, records[0].Value, []byte("bar"))
+	require.Equal(T, records[1].Value, []byte("foo"))
 }
