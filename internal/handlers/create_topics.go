@@ -24,7 +24,7 @@ func (h *CreateTopicsRequestHandler) Handle(r kmsg.Request) (kmsg.Response, erro
 	response.ThrottleMillis = 0
 
 	for _, t := range request.Topics {
-		err := h.metastore.CreateTopic(t.Topic)
+		err := h.metastore.CreateTopic(t.Topic, t.NumPartitions)
 
 		var errCode int16 = 0
 		if err != nil {

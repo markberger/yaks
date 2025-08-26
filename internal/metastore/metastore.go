@@ -9,7 +9,7 @@ import (
 
 type Metastore interface {
 	ApplyMigrations() error
-	CreateTopic(name string) error
+	CreateTopic(name string, nPartitions int32) error
 	GetTopics() ([]Topic, error)
 	GetRecordBatches(topicName string) ([]RecordBatch, error)
 	CommitRecordBatch(topicName string, nRecords int64, s3Path string) error
@@ -26,14 +26,21 @@ func NewGormMetastore(db *gorm.DB) *GormMetastore {
 }
 
 func (m *GormMetastore) ApplyMigrations() error {
-	err := m.db.AutoMigrate(&Topic{}, &RecordBatch{})
+	err := m.db.AutoMigrate(
+		&Topic{},
+		&RecordBatch{},
+		&TopicV2{},
+		&TopicPartition{},
+		&RecordBatchEvent{},
+		&RecordBatchV2{},
+	)
 	if err != nil {
 		return fmt.Errorf("failed to apply migrations: %w", err)
 	}
 	return nil
 }
 
-func (m *GormMetastore) CreateTopic(name string) error {
+func (m *GormMetastore) CreateTopic(name string, nPartitions int32) error {
 	topic := &Topic{
 		Name:      name,
 		MinOffset: 0,

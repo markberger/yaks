@@ -41,7 +41,7 @@ func (h *MetadataRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	if request.AllowAutoTopicCreation && len(request.Topics) > 0 {
 		for _, t := range request.Topics {
 			if !topicExists(t, existingTopics) {
-				h.metastore.CreateTopic(*t.Topic)
+				h.metastore.CreateTopic(*t.Topic, 1)
 			}
 		}
 		existingTopics, err = h.metastore.GetTopics()

@@ -15,7 +15,8 @@ bucket are required.
 
 ```sh
 # docker daemon is required
-go test ./...
+# hardcoded infra setup requires running tests serially
+go test -p=1 ./...
 ```
 
 ## Project Layout

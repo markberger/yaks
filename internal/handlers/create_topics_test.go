@@ -38,7 +38,7 @@ type mockMetastoreCreateTopicFails struct {
 	metastore.GormMetastore
 }
 
-func (*mockMetastoreCreateTopicFails) CreateTopic(name string) error {
+func (*mockMetastoreCreateTopicFails) CreateTopic(name string, nPartitions int32) error {
 	return errors.New("create topic failed")
 }
 

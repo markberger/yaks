@@ -9,7 +9,7 @@ func (s *MetastoreTestSuite) TestCreateTopic() {
 	metastore := s.TestDB.InitMetastore()
 
 	topicName := "test-topic"
-	err := metastore.CreateTopic(topicName)
+	err := metastore.CreateTopic(topicName, 1)
 	require.NoError(s.T(), err)
 
 	topics, err := metastore.GetTopics()
@@ -22,7 +22,7 @@ func (s *MetastoreTestSuite) TestCreateTopic() {
 
 func (s *MetastoreTestSuite) TestCommitRecordBatch() {
 	metastore := s.TestDB.InitMetastore()
-	err := metastore.CreateTopic("test-topic")
+	err := metastore.CreateTopic("test-topic", 1)
 	require.NoError(s.T(), err)
 
 	err = metastore.CommitRecordBatch("test-topic", 10, "s3://some-bucket/topics/test-topic/randomHash.batch")
@@ -75,7 +75,7 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches2() {
 	metastore := s.TestDB.InitMetastore()
 	T := s.T()
 	topic1Name := "batch-topic-1"
-	require.NoError(T, metastore.CreateTopic(topic1Name))
+	require.NoError(T, metastore.CreateTopic(topic1Name, 1))
 
 	// And we send a single message to commit
 	batchInput1 := []BatchCommitInput{
@@ -117,8 +117,8 @@ func (s *MetastoreTestSuite) TestCommitRecordBatches() {
 	// --- Setup for subsequent scenarios ---
 	topic1Name := "batch-topic-1"
 	topic2Name := "batch-topic-2"
-	require.NoError(T, metastore.CreateTopic(topic1Name))
-	require.NoError(T, metastore.CreateTopic(topic2Name))
+	require.NoError(T, metastore.CreateTopic(topic1Name, 1))
+	require.NoError(T, metastore.CreateTopic(topic2Name, 1))
 
 	// --- Scenario 2: Single Batch (New Topic State) ---
 	batchInput1 := []BatchCommitInput{
