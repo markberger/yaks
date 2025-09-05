@@ -66,9 +66,19 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 		var topicResponse kmsg.ProduceResponseTopic
 		topicResponse.Topic = topic.Topic
 
+		metaTopic := h.metastore.GetTopicByName(topic.Topic)
+
 		for _, partition := range topic.Partitions {
 			partitionResponse := kmsg.NewProduceResponseTopicPartition()
 			partitionResponse.Partition = partition.Partition
+
+			// Error response if (1) topic is missing or (2) partition is out of range
+			if metaTopic == nil || partition.Partition < 0 || partition.Partition >= metaTopic.NPartitions {
+				log.WithFields(log.Fields{"topic": topic.Topic, "partition": partition.Partition, "metaTopic": metaTopic}).Info("Invalid TopicPartition")
+				partitionResponse.ErrorCode = kerr.UnknownTopicOrPartition.Code
+				topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
+				continue
+			}
 
 			// Parse RecordBatch
 			var recordBatch kmsg.RecordBatch
@@ -106,6 +116,21 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 			batchCommitOutputs, err := h.metastore.CommitRecordBatches(batchCommitInputs)
 			if err != nil || len(batchCommitOutputs) != 1 {
 				return nil, fmt.Errorf("record commit failed: %v", err)
+			}
+
+			// Register RecordBatchEvent
+			recordBatchEvents := []metastore.RecordBatchEvent{
+				{
+					TopicID:   metaTopic.ID,
+					Partition: partition.Partition,
+					NRecords:  int64(recordBatch.NumRecords),
+					S3Key:     key,
+					Processed: false,
+				},
+			}
+			err = h.metastore.CommitRecordBatchEvents(recordBatchEvents)
+			if err != nil {
+				return nil, fmt.Errorf("failed to commit record batch events: %v", err)
 			}
 
 			// Add response details

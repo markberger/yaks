@@ -10,10 +10,13 @@ import (
 type Metastore interface {
 	ApplyMigrations() error
 	CreateTopic(name string, nPartitions int32) error
+	CreateTopicV2(name string, nPartitions int32) error
 	GetTopics() ([]Topic, error)
+	GetTopicByName(name string) *TopicV2
 	GetRecordBatches(topicName string) ([]RecordBatch, error)
 	CommitRecordBatch(topicName string, nRecords int64, s3Path string) error
 	CommitRecordBatches(batches []BatchCommitInput) ([]BatchCommitOutput, error)
+	CommitRecordBatchEvents(recordBatchEvents []RecordBatchEvent) error
 }
 
 // Struct responsible for logic between server and postgres
@@ -50,6 +53,15 @@ func (m *GormMetastore) CreateTopic(name string, nPartitions int32) error {
 	return result.Error
 }
 
+func (m *GormMetastore) CreateTopicV2(name string, nPartitions int32) error {
+	topicV2 := &TopicV2{
+		Name:        name,
+		NPartitions: nPartitions,
+	}
+	result := m.db.Create(topicV2)
+	return result.Error
+}
+
 func (m *GormMetastore) GetTopics() ([]Topic, error) {
 	var topics []Topic
 	err := m.db.Raw("select * from topics").Scan(&topics).Error
@@ -58,6 +70,26 @@ func (m *GormMetastore) GetTopics() ([]Topic, error) {
 	}
 
 	return topics, nil
+}
+
+func (m *GormMetastore) GetTopicsV2() ([]TopicV2, error) {
+	var topics []TopicV2
+	results := m.db.Find(&topics)
+	if err := results.Error; err != nil {
+		return nil, err
+	}
+
+	return topics, nil
+}
+
+func (m *GormMetastore) GetTopicByName(name string) *TopicV2 {
+	var topic TopicV2
+	result := m.db.Where("name = ?", name).First(&topic)
+	if result.Error != nil {
+		return nil
+	}
+
+	return &topic
 }
 
 func (m *GormMetastore) GetRecordBatches(topicName string) ([]RecordBatch, error) {
@@ -75,6 +107,13 @@ func (m *GormMetastore) GetRecordBatches(topicName string) ([]RecordBatch, error
 	}
 
 	return recordBatches, nil
+}
+
+func (m *GormMetastore) CommitRecordBatchEvents(recordBatchEvents []RecordBatchEvent) error {
+	return m.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Create(recordBatchEvents)
+		return result.Error
+	})
 }
 
 func (m *GormMetastore) CommitRecordBatch(topicName string, nRecords int64, s3Key string) error {
@@ -257,4 +296,71 @@ func (m *GormMetastore) CommitRecordBatches(batches []BatchCommitInput) ([]Batch
 	}
 
 	return results, nil
+}
+
+func (m *GormMetastore) MaterializeRecordBatchEvents(nRecords int32) error {
+	return m.db.Transaction(func(tx *gorm.DB) error {
+		rawSQL := `
+		with locked_events as (
+
+			select *
+			from record_batch_events
+			where processed = false
+			order by created_at
+			limit 50
+			for update skip locked
+
+		),
+
+		locked_partitions as (
+
+			select tp.*
+			from topic_partition tp
+			join locked_events e
+				on tp.topic_id = e.topic_id
+				and tp.partition = e.partition
+			for update
+		),
+
+		offsets as (
+
+			select
+				e.id,
+				e.topic_id,
+				e.partition,
+				e.n_records,
+				sum(e.n_records) over (partition by e.topic_id, e.partition order by e.id) + tp.end_offset - e.n_records AS start_offset,
+				sum(e.n_records) over (partition by e.topic_id, e.partition order by e.id) + tp.end_offset AS end_offset,
+				e.s3_key
+			from locked_events e
+			join topic_partitions tp
+				on tp.topic_id = e.topic_id
+				and tp.partition_index = e.partition
+		)
+
+		insert into record_batch_v2(topic_id, partition, start_offset, end_offset, s3_key)
+		select topic_id, partition, start_offset, end_offset, s3_key
+		from offsets;
+
+		update topic_partitions tp
+		set end_offset = sub.max_end_offset
+		from (
+			select topic_id, partition, max(end_offset) as max_end_offset
+			from offsets
+			group by topic_id, partition
+		) sub
+		where tp.topic_id = sub.topic_id
+			and tp.partition = sub.partition;
+
+		update record_batch_events
+		set processed = true
+		where id in (select * from locked_events);
+		`
+
+		if err := tx.Exec(rawSQL).Error; err != nil {
+			return err
+		}
+
+		return tx.Commit().Error
+	})
 }

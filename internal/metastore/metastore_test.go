@@ -20,6 +20,20 @@ func (s *MetastoreTestSuite) TestCreateTopic() {
 	assert.Equal(s.T(), topics[0].MaxOffset, int64(0))
 }
 
+func (s *MetastoreTestSuite) TestCreateTopicV2() {
+	metastore := s.TestDB.InitMetastore()
+
+	topicName := "test-topic"
+	err := metastore.CreateTopicV2(topicName, 1)
+	require.NoError(s.T(), err)
+
+	topics, err := metastore.GetTopicsV2()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), len(topics), 1)
+	assert.Equal(s.T(), topics[0].Name, topicName)
+	assert.Equal(s.T(), topics[0].NPartitions, int32(1))
+}
+
 func (s *MetastoreTestSuite) TestCommitRecordBatch() {
 	metastore := s.TestDB.InitMetastore()
 	err := metastore.CreateTopic("test-topic", 1)
