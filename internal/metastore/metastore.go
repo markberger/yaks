@@ -9,9 +9,7 @@ import (
 
 type Metastore interface {
 	ApplyMigrations() error
-	CreateTopic(name string, nPartitions int32) error
 	CreateTopicV2(name string, nPartitions int32) error
-	GetTopics() ([]Topic, error)
 	GetTopicsV2() ([]TopicV2, error)
 	GetTopicByName(name string) *TopicV2
 	CommitRecordBatchEvents(recordBatchEvents []RecordBatchEvent) error
@@ -38,7 +36,6 @@ func (m *GormMetastore) GetDB() *gorm.DB {
 
 func (m *GormMetastore) ApplyMigrations() error {
 	err := m.db.AutoMigrate(
-		&Topic{},
 		&TopicV2{},
 		&TopicPartition{},
 		&RecordBatchEvent{},
@@ -48,16 +45,6 @@ func (m *GormMetastore) ApplyMigrations() error {
 		return fmt.Errorf("failed to apply migrations: %w", err)
 	}
 	return nil
-}
-
-func (m *GormMetastore) CreateTopic(name string, nPartitions int32) error {
-	topic := &Topic{
-		Name:      name,
-		MinOffset: 0,
-		MaxOffset: 0,
-	}
-	result := m.db.Create(topic)
-	return result.Error
 }
 
 func (m *GormMetastore) CreateTopicV2(name string, nPartitions int32) error {
@@ -86,16 +73,6 @@ func (m *GormMetastore) CreateTopicV2(name string, nPartitions int32) error {
 
 		return nil
 	})
-}
-
-func (m *GormMetastore) GetTopics() ([]Topic, error) {
-	var topics []Topic
-	err := m.db.Raw("select * from topics").Scan(&topics).Error
-	if err != nil {
-		return nil, err
-	}
-
-	return topics, nil
 }
 
 func (m *GormMetastore) GetTopicsV2() ([]TopicV2, error) {

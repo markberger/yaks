@@ -25,15 +25,11 @@ func (h *CreateTopicsRequestHandler) Handle(r kmsg.Request) (kmsg.Response, erro
 
 	for _, t := range request.Topics {
 		var errCode int16 = 0
-		err := h.metastore.CreateTopic(t.Topic, t.NumPartitions)
+		err := h.metastore.CreateTopicV2(t.Topic, t.NumPartitions)
 		if err != nil {
 			errCode = kerr.KafkaStorageError.Code
 		}
 
-		err = h.metastore.CreateTopicV2(t.Topic, t.NumPartitions)
-		if err != nil {
-			errCode = kerr.KafkaStorageError.Code
-		}
 		response.Topics = append(response.Topics, kmsg.CreateTopicsResponseTopic{
 			Topic:             t.Topic,
 			ErrorCode:         errCode,

@@ -13,7 +13,7 @@ func (s *HandlersTestSuite) TestCreateTopicsHandlerSuccess() {
 	metastore := s.TestDB.InitMetastore()
 	handler := NewCreateTopicsRequestHandler(metastore)
 
-	// When the handler receives a request to create a topic but there is an error
+	// When the handler receives a request to create a topic
 	request := kmsg.NewCreateTopicsRequest()
 	request.Topics = []kmsg.CreateTopicsRequestTopic{
 		{Topic: "test-topic", NumPartitions: 1, ReplicationFactor: 1},
@@ -38,7 +38,7 @@ type mockMetastoreCreateTopicFails struct {
 	metastore.GormMetastore
 }
 
-func (*mockMetastoreCreateTopicFails) CreateTopic(name string, nPartitions int32) error {
+func (*mockMetastoreCreateTopicFails) CreateTopicV2(name string, nPartitions int32) error {
 	return errors.New("create topic failed")
 }
 

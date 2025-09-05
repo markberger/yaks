@@ -14,14 +14,6 @@ type BaseModel struct {
 	DeletedAt gorm.DeletedAt `gorm:"index"`
 }
 
-// Represents a kafka topic
-type Topic struct {
-	BaseModel
-	Name      string `gorm:"size:255; not null; index"`
-	MinOffset int64  `gorm:"type:bigint; not null; check:min_offset >= 0"`
-	MaxOffset int64  `gorm:"type:bigint; not null; check:max_offset >= 0; check:max_offset >= min_offset"`
-}
-
 // Output structure containing the result for a single committed batch in V2 system
 type BatchCommitOutputV2 struct {
 	InputIndex int    `gorm:"column:input_idx"`
