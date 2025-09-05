@@ -62,7 +62,3 @@ type RecordBatchV2 struct {
 	NRecords    int64  `gorm:"type:bigint; not null; check:n_records >= 0"`
 	S3Key       string `gorm:"size:255; not null"`
 }
-
-func (r *RecordBatchV2) GetSize() int64 {
-	return r.NRecords
-}
