@@ -57,7 +57,6 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	response.ThrottleMillis = 0
 
 	// Identify all S3 files to download
-	// TODO: pass fetch offset to GetRecordBatches
 	// TODO: respect byte size cuttoff when returning responses
 	var batchesMetadata []metastore.RecordBatchV2
 	for _, t := range request.Topics {

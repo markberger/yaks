@@ -13,7 +13,6 @@ type Metastore interface {
 	CreateTopicV2(name string, nPartitions int32) error
 	GetTopics() ([]Topic, error)
 	GetTopicByName(name string) *TopicV2
-	GetRecordBatches(topicName string) ([]RecordBatch, error)
 	CommitRecordBatchEvents(recordBatchEvents []RecordBatchEvent) error
 	MaterializeRecordBatchEvents(nRecords int32) error
 	CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchCommitOutputV2, error)
@@ -39,7 +38,6 @@ func (m *GormMetastore) GetDB() *gorm.DB {
 func (m *GormMetastore) ApplyMigrations() error {
 	err := m.db.AutoMigrate(
 		&Topic{},
-		&RecordBatch{},
 		&TopicV2{},
 		&TopicPartition{},
 		&RecordBatchEvent{},
@@ -117,23 +115,6 @@ func (m *GormMetastore) GetTopicByName(name string) *TopicV2 {
 	}
 
 	return &topic
-}
-
-func (m *GormMetastore) GetRecordBatches(topicName string) ([]RecordBatch, error) {
-	var recordBatches []RecordBatch
-
-	err := m.db.
-		Joins("JOIN topics ON topics.id = record_batches.topic_id").
-		Where("topics.name = ?", topicName).
-		Preload("Topic"). // Preload still works after explicit join
-		Order("record_batches.start_offset asc").
-		Find(&recordBatches).Error
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to get record batches for topic %s: %w", topicName, err)
-	}
-
-	return recordBatches, nil
 }
 
 func (m *GormMetastore) CommitRecordBatchEvents(recordBatchEvents []RecordBatchEvent) error {

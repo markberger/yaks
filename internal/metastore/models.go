@@ -22,16 +22,6 @@ type Topic struct {
 	MaxOffset int64  `gorm:"type:bigint; not null; check:max_offset >= 0; check:max_offset >= min_offset"`
 }
 
-// A record batch represents a contiguous group of kafka messages
-type RecordBatch struct {
-	BaseModel
-	TopicID     uuid.UUID `gorm:"type:uuid; index"`
-	Topic       Topic     `gorm:"foreignKey:TopicID"`
-	StartOffset int64     `gorm:"type:bigint; not null; check:start_offset >= 0"`
-	EndOffset   int64     `gorm:"type:bigint; not null; check:end_offset >= 0; check:end_offset >= start_offset"`
-	S3Key       string    `gorm:"size:255; not null"`
-}
-
 // Input structure for a single batch commit request within the batch operation
 type BatchCommitInput struct {
 	TopicName string
