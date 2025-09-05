@@ -14,7 +14,6 @@ type Metastore interface {
 	GetTopics() ([]Topic, error)
 	GetTopicByName(name string) *TopicV2
 	GetRecordBatches(topicName string) ([]RecordBatch, error)
-	CommitRecordBatches(batches []BatchCommitInput) ([]BatchCommitOutput, error)
 	CommitRecordBatchEvents(recordBatchEvents []RecordBatchEvent) error
 	MaterializeRecordBatchEvents(nRecords int32) error
 	CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchCommitOutputV2, error)
@@ -142,127 +141,6 @@ func (m *GormMetastore) CommitRecordBatchEvents(recordBatchEvents []RecordBatchE
 		result := tx.Create(recordBatchEvents)
 		return result.Error
 	})
-}
-
-func (m *GormMetastore) CommitRecordBatches(batches []BatchCommitInput) ([]BatchCommitOutput, error) {
-	if len(batches) == 0 {
-		return []BatchCommitOutput{}, nil
-	}
-
-	// Extract data into parallel slices
-	topicNames := make([]string, len(batches))
-	nRecords := make([]int64, len(batches))
-	s3Keys := make([]string, len(batches))
-	for i, batch := range batches {
-		topicNames[i] = batch.TopicName
-		nRecords[i] = batch.NRecords
-		s3Keys[i] = batch.S3Key
-	}
-
-	var results []BatchCommitOutput
-	err := m.db.Transaction(func(tx *gorm.DB) error {
-		sqlQuery := `
-			WITH input_data AS (
-				-- Use unnest to create rows from input arrays, preserving order with ORDINALITY
-				SELECT
-					idx - 1 AS input_idx, -- 0-based index matching original slice
-					topic_name,
-					n_record,
-					s3_key
-				FROM unnest($1::text[], $2::bigint[], $3::text[])
-					 WITH ORDINALITY AS t(topic_name, n_record, s3_key, idx)
-			),
-			topic_lookup AS (
-				-- Get current state of all relevant topics and lock them
-				SELECT
-					t.id,
-					t.name,
-					t.min_offset,
-					t.max_offset,
-					EXISTS (SELECT 1 FROM record_batches WHERE topic_id = t.id LIMIT 1) AS has_batches
-				FROM topics t
-				JOIN (SELECT DISTINCT topic_name FROM input_data) AS needed_topics
-				  ON t.name = needed_topics.topic_name
-				FOR UPDATE OF t
-			),
-			offset_calculations AS (
-				-- Calculate offsets for each batch, considering preceding batches in this transaction
-				SELECT
-					inp.input_idx,
-					inp.topic_name,
-					inp.n_record AS n_records, -- Alias for clarity
-					inp.s3_key,
-					tl.id AS topic_id,
-					-- Sum records for the same topic from preceding input rows (ordered by input index)
-					COALESCE(SUM(inp.n_record) OVER (PARTITION BY tl.id ORDER BY inp.input_idx ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS preceding_records_in_batch,
-					tl.max_offset AS initial_topic_max_offset,
-					tl.min_offset AS initial_topic_min_offset,
-					tl.has_batches AS has_batches
-				FROM input_data inp
-				JOIN topic_lookup tl ON inp.topic_name = tl.name
-			),
-			new_batches_insert AS (
-				-- Insert the new batches with calculated offsets
-				INSERT INTO record_batches (
-					id, created_at, updated_at, topic_id, start_offset, end_offset, s3_key
-				)
-				SELECT
-					gen_random_uuid(),
-					NOW(),
-					NOW(),
-					oc.topic_id,
-					-- Calculate start_offset (handle initial state)
-					(oc.initial_topic_max_offset + oc.preceding_records_in_batch + CASE WHEN oc.has_batches THEN 1 ELSE 0 END) AS start_offset,
-					-- Calculate end_offset
-					(oc.initial_topic_max_offset + oc.preceding_records_in_batch + CASE WHEN oc.has_batches THEN 1 ELSE 0 END) + oc.n_records - 1 AS end_offset,
-					oc.s3_key
-				FROM offset_calculations oc
-				-- ORDER BY oc.input_idx -- Optional: Ensures insert order matches input if needed
-				RETURNING id, topic_id, start_offset, end_offset, s3_key -- Also return end_offset
-			),
-			topic_final_offsets AS (
-				-- Find the maximum end_offset achieved for each topic in this batch insert
-				SELECT
-					topic_id,
-					MAX(end_offset) AS final_end_offset
-				FROM new_batches_insert
-				GROUP BY topic_id
-			),
-			final_topic_update AS (
-				-- Update the topics table using the calculated final end_offset
-				UPDATE topics t
-				SET
-					max_offset = tfo.final_end_offset, -- Set to the highest end_offset reached
-					updated_at = NOW()
-				FROM topic_final_offsets tfo
-				WHERE t.id = tfo.topic_id
-			)
-			-- Final SELECT to retrieve the required output, joining inserted data back to calculations
-			SELECT
-				oc.input_idx AS input_idx,         -- Matches InputIndex (via input_idx)
-				nb.start_offset AS base_offset,    -- Alias start_offset to match BaseOffset struct field
-				nb.s3_key AS s3_key                -- Explicitly use nb.s3_key to match struct and avoid ambiguity
-			FROM new_batches_insert nb
-			JOIN offset_calculations oc
-			  ON nb.topic_id = oc.topic_id
-			 AND nb.s3_key = oc.s3_key -- Join using topic_id and s3_key (assuming this combo is unique within the batch)
-			ORDER BY oc.input_idx; -- Return results in the original input order
-		`
-
-		err := tx.Raw(sqlQuery,
-			pq.Array(topicNames),
-			pq.Array(nRecords),
-			pq.Array(s3Keys),
-		).Scan(&results).Error
-
-		return err
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to commit record batches: %w", err)
-	}
-
-	return results, nil
 }
 
 func (m *GormMetastore) CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchCommitOutputV2, error) {

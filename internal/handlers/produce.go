@@ -105,32 +105,18 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 				return nil, err
 			}
 
-			// Register
-			batchCommitInputs := []metastore.BatchCommitInput{
-				{
-					TopicName: topic.Topic,
-					NRecords:  int64(recordBatch.NumRecords),
-					S3Key:     key,
-				},
-			}
-			batchCommitOutputs, err := h.metastore.CommitRecordBatches(batchCommitInputs)
-			if err != nil || len(batchCommitOutputs) != 1 {
-				return nil, fmt.Errorf("record commit failed: %v", err)
-			}
-
-			// Register RecordBatchEvent
-			recordBatchEvents := []metastore.RecordBatchEvent{
+			// Register RecordBatches with metastore
+			batchCommitInputs := []metastore.RecordBatchV2{
 				{
 					TopicID:   metaTopic.ID,
 					Partition: partition.Partition,
 					NRecords:  int64(recordBatch.NumRecords),
 					S3Key:     key,
-					Processed: false,
 				},
 			}
-			err = h.metastore.CommitRecordBatchEvents(recordBatchEvents)
-			if err != nil {
-				return nil, fmt.Errorf("failed to commit record batch events: %v", err)
+			batchCommitOutputs, err := h.metastore.CommitRecordBatchesV2(batchCommitInputs)
+			if err != nil || len(batchCommitOutputs) != 1 {
+				return nil, fmt.Errorf("record commit failed: %v", err)
 			}
 
 			// Add response details
