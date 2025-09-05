@@ -512,3 +512,530 @@ func BenchmarkMaterializeRecordBatchEvents_MultiPartitionConcurrent(b *testing.B
 	}
 	runBenchmarkScenario(b, config)
 }
+
+//
+// CommitRecordBatchesV2 Benchmarks
+//
+
+// CommitBenchmarkConfig holds configuration for CommitRecordBatchesV2 benchmark scenarios
+type CommitBenchmarkConfig struct {
+	Name                string
+	NumTopics           int
+	PartitionsPerTopic  int32
+	BatchesPerCommit    int
+	MinRecordsPerBatch  int64
+	MaxRecordsPerBatch  int64
+	NumWriters          int
+	WithExistingOffsets bool
+	CommitsPerWriter    int
+	PartitionStrategy   string // "concentrated", "distributed", "random"
+}
+
+// Predefined CommitRecordBatchesV2 benchmark scenarios
+var (
+	SmallCommitScenario = CommitBenchmarkConfig{
+		Name:                "SmallCommit",
+		NumTopics:           2,
+		PartitionsPerTopic:  2,
+		BatchesPerCommit:    10,
+		MinRecordsPerBatch:  10,
+		MaxRecordsPerBatch:  100,
+		NumWriters:          1,
+		WithExistingOffsets: false,
+		CommitsPerWriter:    50,
+		PartitionStrategy:   "distributed",
+	}
+
+	MediumCommitScenario = CommitBenchmarkConfig{
+		Name:                "MediumCommit",
+		NumTopics:           3,
+		PartitionsPerTopic:  4,
+		BatchesPerCommit:    50,
+		MinRecordsPerBatch:  50,
+		MaxRecordsPerBatch:  500,
+		NumWriters:          1,
+		WithExistingOffsets: false,
+		CommitsPerWriter:    100,
+		PartitionStrategy:   "distributed",
+	}
+
+	LargeCommitScenario = CommitBenchmarkConfig{
+		Name:                "LargeCommit",
+		NumTopics:           5,
+		PartitionsPerTopic:  8,
+		BatchesPerCommit:    200,
+		MinRecordsPerBatch:  100,
+		MaxRecordsPerBatch:  1000,
+		NumWriters:          1,
+		WithExistingOffsets: false,
+		CommitsPerWriter:    50,
+		PartitionStrategy:   "distributed",
+	}
+
+	HighContentionCommitScenario = CommitBenchmarkConfig{
+		Name:                "HighContentionCommit",
+		NumTopics:           2,
+		PartitionsPerTopic:  2,
+		BatchesPerCommit:    25,
+		MinRecordsPerBatch:  10,
+		MaxRecordsPerBatch:  50,
+		NumWriters:          50,
+		WithExistingOffsets: false,
+		CommitsPerWriter:    100,
+		PartitionStrategy:   "concentrated", // All writers target same partitions
+	}
+
+	LowContentionCommitScenario = CommitBenchmarkConfig{
+		Name:                "LowContentionCommit",
+		NumTopics:           4,
+		PartitionsPerTopic:  8,
+		BatchesPerCommit:    25,
+		MinRecordsPerBatch:  10,
+		MaxRecordsPerBatch:  50,
+		NumWriters:          4,
+		WithExistingOffsets: false,
+		CommitsPerWriter:    100,
+		PartitionStrategy:   "distributed", // Writers spread across partitions
+	}
+
+	ExistingOffsetsCommitScenario = CommitBenchmarkConfig{
+		Name:                "ExistingOffsetsCommit",
+		NumTopics:           3,
+		PartitionsPerTopic:  4,
+		BatchesPerCommit:    30,
+		MinRecordsPerBatch:  50,
+		MaxRecordsPerBatch:  200,
+		NumWriters:          1,
+		WithExistingOffsets: true,
+		CommitsPerWriter:    75,
+		PartitionStrategy:   "distributed",
+	}
+)
+
+// CommitBenchmarkMetrics holds performance metrics for CommitRecordBatchesV2 benchmarks
+type CommitBenchmarkMetrics struct {
+	TotalCommits         int64
+	TotalBatches         int64
+	TotalRecords         int64
+	SuccessfulCommits    int64
+	FailedCommits        int64
+	ExecutionTimeMs      int64
+	AverageCommitLatency float64
+	BatchesPerSecond     float64
+	RecordsPerSecond     float64
+	PartitionsUpdated    int32
+}
+
+// setupCommitBenchmarkData creates test data for CommitRecordBatchesV2 benchmarking
+func setupCommitBenchmarkData(ms *metastore.GormMetastore, config CommitBenchmarkConfig) ([]metastore.TopicV2, error) {
+	// Create topics and partitions
+	var topics []metastore.TopicV2
+	for i := 0; i < config.NumTopics; i++ {
+		topicName := fmt.Sprintf("commit-bench-topic-%d", i)
+		err := ms.CreateTopicV2(topicName, config.PartitionsPerTopic)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create topic %s: %w", topicName, err)
+		}
+
+		topic := ms.GetTopicByName(topicName)
+		if topic == nil {
+			return nil, fmt.Errorf("failed to retrieve created topic %s", topicName)
+		}
+		topics = append(topics, *topic)
+	}
+
+	// Create existing offset data if requested
+	if config.WithExistingOffsets {
+		err := createExistingCommitData(ms, topics)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create existing commit data: %w", err)
+		}
+	}
+
+	return topics, nil
+}
+
+// createExistingCommitData creates some existing RecordBatchV2 data to simulate real-world scenarios
+func createExistingCommitData(ms *metastore.GormMetastore, topics []metastore.TopicV2) error {
+	for _, topic := range topics {
+		// Create some existing batches for each partition
+		var existingBatches []metastore.RecordBatchV2
+		for p := int32(0); p < 2; p++ { // Create data for first 2 partitions
+			for i := 0; i < 5; i++ {
+				batch := metastore.RecordBatchV2{
+					TopicID:   topic.ID,
+					Partition: p,
+					NRecords:  int64(100 + i*25),
+					S3Key:     fmt.Sprintf("s3://existing-commit-bucket/topic-%s/partition-%d/existing-%d.parquet", topic.Name, p, i),
+				}
+				existingBatches = append(existingBatches, batch)
+			}
+		}
+
+		// Commit existing batches
+		_, err := ms.CommitRecordBatchesV2(existingBatches)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// generateCommitBatches generates a slice of RecordBatchV2 for testing
+func generateCommitBatches(topics []metastore.TopicV2, config CommitBenchmarkConfig, writerID int, commitID int, rng *rand.Rand) []metastore.RecordBatchV2 {
+	batches := make([]metastore.RecordBatchV2, 0, config.BatchesPerCommit)
+
+	for i := 0; i < config.BatchesPerCommit; i++ {
+		var topic metastore.TopicV2
+		var partition int32
+
+		switch config.PartitionStrategy {
+		case "concentrated":
+			// All writers target the same few partitions (high contention)
+			topic = topics[0]
+			partition = int32(i % 2) // Only use first 2 partitions
+		case "distributed":
+			// Spread batches across all available topics and partitions
+			topicIdx := (writerID*config.BatchesPerCommit + i) % len(topics)
+			topic = topics[topicIdx]
+			partition = int32((writerID*config.BatchesPerCommit + i) % int(config.PartitionsPerTopic))
+		case "random":
+			// Random distribution
+			topic = topics[rng.Intn(len(topics))]
+			partition = int32(rng.Intn(int(config.PartitionsPerTopic)))
+		default:
+			// Default to distributed
+			topicIdx := (writerID*config.BatchesPerCommit + i) % len(topics)
+			topic = topics[topicIdx]
+			partition = int32((writerID*config.BatchesPerCommit + i) % int(config.PartitionsPerTopic))
+		}
+
+		// Generate record count within specified range
+		recordRange := config.MaxRecordsPerBatch - config.MinRecordsPerBatch + 1
+		nRecords := config.MinRecordsPerBatch + int64(rng.Intn(int(recordRange)))
+
+		batch := metastore.RecordBatchV2{
+			TopicID:   topic.ID,
+			Partition: partition,
+			NRecords:  nRecords,
+			S3Key:     fmt.Sprintf("s3://commit-bench-bucket/topic-%s/partition-%d/writer-%d-commit-%d-batch-%d.parquet", topic.Name, partition, writerID, commitID, i),
+		}
+		batches = append(batches, batch)
+	}
+
+	return batches
+}
+
+// runCommitBenchmarkScenario executes a CommitRecordBatchesV2 benchmark scenario
+func runCommitBenchmarkScenario(b *testing.B, config CommitBenchmarkConfig) {
+	// Setup test database once for all iterations
+	testDB := metastore.NewTestDB()
+	defer testDB.Close()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+
+		// Create fresh metastore for each iteration
+		ms := testDB.InitMetastore()
+
+		// Setup benchmark data
+		topics, err := setupCommitBenchmarkData(ms, config)
+		require.NoError(b, err)
+
+		b.StartTimer()
+
+		// Execute the benchmark with concurrent writers
+		start := time.Now()
+		err = runConcurrentCommitWriters(ms, topics, config)
+		executionTime := time.Since(start)
+
+		b.StopTimer()
+
+		require.NoError(b, err)
+
+		// Collect metrics for reporting
+		if i == 0 { // Report metrics only for first iteration to avoid noise
+			metrics := collectCommitBenchmarkMetrics(ms, topics, config, executionTime)
+			reportCommitBenchmarkMetrics(b, config, metrics)
+		}
+
+		// Close the database connection to prevent connection leaks
+		sqlDB, _ := ms.GetDB().DB()
+		if sqlDB != nil {
+			sqlDB.Close()
+		}
+	}
+}
+
+// runConcurrentCommitWriters runs multiple writers concurrently
+func runConcurrentCommitWriters(ms *metastore.GormMetastore, topics []metastore.TopicV2, config CommitBenchmarkConfig) error {
+	if config.NumWriters <= 1 {
+		// Single writer case
+		return runSingleCommitWriter(ms, topics, config, 0)
+	}
+
+	// Multiple writers case
+	var wg sync.WaitGroup
+	errChan := make(chan error, config.NumWriters)
+
+	// Start concurrent writers
+	for writerID := 0; writerID < config.NumWriters; writerID++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			err := runSingleCommitWriter(ms, topics, config, id)
+			if err != nil {
+				errChan <- fmt.Errorf("writer %d failed: %w", id, err)
+			}
+		}(writerID)
+	}
+
+	// Wait for all writers to complete
+	wg.Wait()
+	close(errChan)
+
+	// Check for any errors
+	for err := range errChan {
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// runSingleCommitWriter runs a single writer that performs multiple commits
+func runSingleCommitWriter(ms *metastore.GormMetastore, topics []metastore.TopicV2, config CommitBenchmarkConfig, writerID int) error {
+	// Use deterministic random seed based on writer ID for reproducible results
+	rng := rand.New(rand.NewSource(int64(42 + writerID)))
+
+	for commitID := 0; commitID < config.CommitsPerWriter; commitID++ {
+		// Generate batches for this commit
+		batches := generateCommitBatches(topics, config, writerID, commitID, rng)
+
+		// Commit the batches
+		_, err := ms.CommitRecordBatchesV2(batches)
+		if err != nil {
+			return fmt.Errorf("commit %d failed: %w", commitID, err)
+		}
+	}
+
+	return nil
+}
+
+// collectCommitBenchmarkMetrics gathers performance metrics after benchmark execution
+func collectCommitBenchmarkMetrics(ms *metastore.GormMetastore, topics []metastore.TopicV2, config CommitBenchmarkConfig, executionTime time.Duration) CommitBenchmarkMetrics {
+	metrics := CommitBenchmarkMetrics{
+		ExecutionTimeMs: executionTime.Milliseconds(),
+		TotalCommits:    int64(config.NumWriters * config.CommitsPerWriter),
+	}
+
+	// Count created record batches and total records
+	for _, topic := range topics {
+		batches, _ := ms.GetRecordBatchesV2(topic.Name, 0)
+		metrics.TotalBatches += int64(len(batches))
+
+		for _, batch := range batches {
+			metrics.TotalRecords += batch.NRecords
+		}
+
+		// Count updated partitions
+		partitions, _ := ms.GetTopicPartitions(topic.Name)
+		for _, partition := range partitions {
+			if partition.EndOffset > 0 {
+				metrics.PartitionsUpdated++
+			}
+		}
+	}
+
+	// Calculate derived metrics
+	metrics.SuccessfulCommits = metrics.TotalCommits // Assume all succeeded if we got here
+	metrics.FailedCommits = 0
+
+	if metrics.ExecutionTimeMs > 0 {
+		executionSeconds := float64(metrics.ExecutionTimeMs) / 1000.0
+		metrics.BatchesPerSecond = float64(metrics.TotalBatches) / executionSeconds
+		metrics.RecordsPerSecond = float64(metrics.TotalRecords) / executionSeconds
+		metrics.AverageCommitLatency = executionSeconds / float64(metrics.TotalCommits) * 1000.0 // ms per commit
+	}
+
+	return metrics
+}
+
+// reportCommitBenchmarkMetrics logs additional metrics beyond standard Go benchmark output
+func reportCommitBenchmarkMetrics(b *testing.B, config CommitBenchmarkConfig, metrics CommitBenchmarkMetrics) {
+	b.Logf("Scenario: %s", config.Name)
+	b.Logf("Concurrent Writers: %d", config.NumWriters)
+	b.Logf("Partition Strategy: %s", config.PartitionStrategy)
+	b.Logf("Total Commits: %d", metrics.TotalCommits)
+	b.Logf("Total Batches: %d", metrics.TotalBatches)
+	b.Logf("Total Records: %d", metrics.TotalRecords)
+	b.Logf("Partitions Updated: %d", metrics.PartitionsUpdated)
+	b.Logf("Execution Time: %dms", metrics.ExecutionTimeMs)
+	b.Logf("Average Commit Latency: %.2fms", metrics.AverageCommitLatency)
+
+	if metrics.BatchesPerSecond > 0 {
+		b.Logf("Batches/Second: %.2f", metrics.BatchesPerSecond)
+	}
+	if metrics.RecordsPerSecond > 0 {
+		b.Logf("Records/Second: %.2f", metrics.RecordsPerSecond)
+	}
+}
+
+// Core CommitRecordBatchesV2 benchmark functions
+
+func BenchmarkCommitRecordBatchesV2_Small(b *testing.B) {
+	runCommitBenchmarkScenario(b, SmallCommitScenario)
+}
+
+func BenchmarkCommitRecordBatchesV2_Medium(b *testing.B) {
+	runCommitBenchmarkScenario(b, MediumCommitScenario)
+}
+
+func BenchmarkCommitRecordBatchesV2_Large(b *testing.B) {
+	runCommitBenchmarkScenario(b, LargeCommitScenario)
+}
+
+func BenchmarkCommitRecordBatchesV2_ExistingOffsets(b *testing.B) {
+	runCommitBenchmarkScenario(b, ExistingOffsetsCommitScenario)
+}
+
+// Batch size optimization benchmarks
+
+func BenchmarkCommitRecordBatchesV2_BatchSize10(b *testing.B) {
+	config := MediumCommitScenario
+	config.Name = "BatchSize10"
+	config.BatchesPerCommit = 10
+	runCommitBenchmarkScenario(b, config)
+}
+
+func BenchmarkCommitRecordBatchesV2_BatchSize25(b *testing.B) {
+	config := MediumCommitScenario
+	config.Name = "BatchSize25"
+	config.BatchesPerCommit = 25
+	runCommitBenchmarkScenario(b, config)
+}
+
+func BenchmarkCommitRecordBatchesV2_BatchSize100(b *testing.B) {
+	config := MediumCommitScenario
+	config.Name = "BatchSize100"
+	config.BatchesPerCommit = 100
+	runCommitBenchmarkScenario(b, config)
+}
+
+func BenchmarkCommitRecordBatchesV2_BatchSize500(b *testing.B) {
+	config := LargeCommitScenario
+	config.Name = "BatchSize500"
+	config.BatchesPerCommit = 500
+	runCommitBenchmarkScenario(b, config)
+}
+
+// Concurrent writer benchmarks - Lock contention testing
+
+func BenchmarkCommitRecordBatchesV2_Concurrent2Writers(b *testing.B) {
+	config := MediumCommitScenario
+	config.Name = "Concurrent2Writers"
+	config.NumWriters = 2
+	config.CommitsPerWriter = 150 // More commits to better test concurrency
+	runCommitBenchmarkScenario(b, config)
+}
+
+func BenchmarkCommitRecordBatchesV2_Concurrent4Writers(b *testing.B) {
+	config := MediumCommitScenario
+	config.Name = "Concurrent4Writers"
+	config.NumWriters = 4
+	config.CommitsPerWriter = 150
+	runCommitBenchmarkScenario(b, config)
+}
+
+func BenchmarkCommitRecordBatchesV2_Concurrent8Writers(b *testing.B) {
+	config := LargeCommitScenario
+	config.Name = "Concurrent8Writers"
+	config.NumWriters = 8
+	config.CommitsPerWriter = 100
+	runCommitBenchmarkScenario(b, config)
+}
+
+func BenchmarkCommitRecordBatchesV2_Concurrent16Writers(b *testing.B) {
+	config := LargeCommitScenario
+	config.Name = "Concurrent16Writers"
+	config.NumWriters = 16
+	config.CommitsPerWriter = 50
+	runCommitBenchmarkScenario(b, config)
+}
+
+// High contention scenarios
+
+func BenchmarkCommitRecordBatchesV2_HighContention(b *testing.B) {
+	runCommitBenchmarkScenario(b, HighContentionCommitScenario)
+}
+
+func BenchmarkCommitRecordBatchesV2_LowContention(b *testing.B) {
+	runCommitBenchmarkScenario(b, LowContentionCommitScenario)
+}
+
+// Partition strategy comparison
+
+func BenchmarkCommitRecordBatchesV2_ConcentratedPartitions(b *testing.B) {
+	config := MediumCommitScenario
+	config.Name = "ConcentratedPartitions"
+	config.NumWriters = 4
+	config.PartitionStrategy = "concentrated"
+	config.CommitsPerWriter = 100
+	runCommitBenchmarkScenario(b, config)
+}
+
+func BenchmarkCommitRecordBatchesV2_DistributedPartitions(b *testing.B) {
+	config := MediumCommitScenario
+	config.Name = "DistributedPartitions"
+	config.NumWriters = 4
+	config.PartitionStrategy = "distributed"
+	config.CommitsPerWriter = 100
+	runCommitBenchmarkScenario(b, config)
+}
+
+func BenchmarkCommitRecordBatchesV2_RandomPartitions(b *testing.B) {
+	config := MediumCommitScenario
+	config.Name = "RandomPartitions"
+	config.NumWriters = 4
+	config.PartitionStrategy = "random"
+	config.CommitsPerWriter = 100
+	runCommitBenchmarkScenario(b, config)
+}
+
+// Stress test scenarios
+
+func BenchmarkCommitRecordBatchesV2_HighThroughputStress(b *testing.B) {
+	config := CommitBenchmarkConfig{
+		Name:                "HighThroughputStress",
+		NumTopics:           8,
+		PartitionsPerTopic:  16,
+		BatchesPerCommit:    100,
+		MinRecordsPerBatch:  100,
+		MaxRecordsPerBatch:  1000,
+		NumWriters:          8,
+		WithExistingOffsets: false,
+		CommitsPerWriter:    200,
+		PartitionStrategy:   "distributed",
+	}
+	runCommitBenchmarkScenario(b, config)
+}
+
+func BenchmarkCommitRecordBatchesV2_SmallBatchHighFrequency(b *testing.B) {
+	config := CommitBenchmarkConfig{
+		Name:                "SmallBatchHighFrequency",
+		NumTopics:           3,
+		PartitionsPerTopic:  4,
+		BatchesPerCommit:    5,
+		MinRecordsPerBatch:  1,
+		MaxRecordsPerBatch:  10,
+		NumWriters:          6,
+		WithExistingOffsets: false,
+		CommitsPerWriter:    500,
+		PartitionStrategy:   "random",
+	}
+	runCommitBenchmarkScenario(b, config)
+}

@@ -1,9 +1,21 @@
-# MaterializeRecordBatchEvents Benchmark Suite
+# Metastore Benchmark Suite
 
-This benchmark suite provides comprehensive performance testing for the
-`MaterializeRecordBatchEvents` function to support query optimization efforts.
-It includes support for testing concurrent indexers to measure scalability and
-contention characteristics.
+This benchmark suite provides comprehensive performance testing for critical
+metastore functions to support query optimization efforts. It includes support
+for testing concurrent operations to measure scalability and contention
+characteristics.
+
+## Functions Tested
+
+### MaterializeRecordBatchEvents
+
+Tests the materialization of record batch events into the V2 system with
+concurrent indexer support.
+
+### CommitRecordBatchesV2
+
+Tests the direct commit of record batches with multiple concurrent writers to
+measure lock contention and throughput characteristics.
 
 ## Overview
 
@@ -54,19 +66,73 @@ These benchmarks leverage the `FOR UPDATE SKIP LOCKED` mechanism in
 `MaterializeRecordBatchEvents` to safely process events concurrently without
 conflicts.
 
+## CommitRecordBatchesV2 Benchmark Scenarios
+
+### Core Performance Benchmarks
+
+- **SmallCommit**: 2 topics, 2 partitions each, 10 batches per commit (baseline
+  testing)
+- **MediumCommit**: 3 topics, 4 partitions each, 50 batches per commit (typical
+  production load)
+- **LargeCommit**: 5 topics, 8 partitions each, 200 batches per commit (stress
+  testing)
+- **ExistingOffsetsCommit**: Tests performance with pre-existing partition
+  offsets
+
+### Batch Size Optimization
+
+Tests different numbers of batches per commit:
+
+- **BatchSize10**: 10 batches per commit
+- **BatchSize25**: 25 batches per commit
+- **BatchSize100**: 100 batches per commit
+- **BatchSize500**: 500 batches per commit
+
+### Concurrent Writer Benchmarks - Lock Contention Testing
+
+Tests multiple writers running simultaneously to measure lock contention and
+throughput:
+
+- **Concurrent2Writers**: 2 writers committing batches concurrently
+- **Concurrent4Writers**: 4 writers committing batches concurrently
+- **Concurrent8Writers**: 8 writers committing batches concurrently
+- **Concurrent16Writers**: 16 writers committing batches concurrently
+
+### Partition Strategy Benchmarks
+
+Tests different partition targeting strategies to measure contention impact:
+
+- **ConcentratedPartitions**: All writers target the same few partitions (high
+  contention)
+- **DistributedPartitions**: Writers spread across all available partitions (low
+  contention)
+- **RandomPartitions**: Writers randomly target partitions (mixed contention)
+
+### Contention-Specific Scenarios
+
+- **HighContention**: 4 writers targeting same partitions with small batches
+- **LowContention**: 4 writers spread across many partitions
+- **HighThroughputStress**: 8 writers with large batches across many partitions
+- **SmallBatchHighFrequency**: 6 writers with very small, frequent commits
+
 ## Running Benchmarks
 
 ### Basic Usage
 
 ```bash
 # Run all MaterializeRecordBatchEvents benchmarks
-go test -bench=BenchmarkMaterializeRecordBatchEvents -benchmem ./internal/metastore
+go test -bench=BenchmarkMaterializeRecordBatchEvents -benchmem ./benchmarks/metastore
+
+# Run all CommitRecordBatchesV2 benchmarks
+go test -bench=BenchmarkCommitRecordBatchesV2 -benchmem ./benchmarks/metastore
 
 # Run specific scenario
-go test -bench=BenchmarkMaterializeRecordBatchEvents_Medium -benchmem ./internal/metastore
+go test -bench=BenchmarkMaterializeRecordBatchEvents_Medium -benchmem ./benchmarks/metastore
+go test -bench=BenchmarkCommitRecordBatchesV2_Medium -benchmem ./benchmarks/metastore
 
 # Run batch size optimization tests
-go test -bench=BenchmarkMaterializeRecordBatchEvents_BatchSize -benchmem ./internal/metastore
+go test -bench=BenchmarkMaterializeRecordBatchEvents_BatchSize -benchmem ./benchmarks/metastore
+go test -bench=BenchmarkCommitRecordBatchesV2_BatchSize -benchmem ./benchmarks/metastore
 ```
 
 ### Performance Comparison
@@ -86,14 +152,34 @@ benchcmp baseline.txt optimized.txt
 
 ```bash
 # Run all concurrent indexer benchmarks
-go test -bench=BenchmarkMaterializeRecordBatchEvents_Concurrent -benchmem ./internal/metastore
+go test -bench=BenchmarkMaterializeRecordBatchEvents_Concurrent -benchmem ./benchmarks/metastore
 
 # Test specific concurrency levels
-go test -bench=BenchmarkMaterializeRecordBatchEvents_Concurrent2Indexers -benchmem -v ./internal/metastore
-go test -bench=BenchmarkMaterializeRecordBatchEvents_Concurrent4Indexers -benchmem -v ./internal/metastore
+go test -bench=BenchmarkMaterializeRecordBatchEvents_Concurrent2Indexers -benchmem -v ./benchmarks/metastore
+go test -bench=BenchmarkMaterializeRecordBatchEvents_Concurrent4Indexers -benchmem -v ./benchmarks/metastore
 
 # Compare single vs concurrent performance
-go test -bench="BenchmarkMaterializeRecordBatchEvents_Medium|BenchmarkMaterializeRecordBatchEvents_Concurrent2Indexers" -benchmem ./internal/metastore
+go test -bench="BenchmarkMaterializeRecordBatchEvents_Medium|BenchmarkMaterializeRecordBatchEvents_Concurrent2Indexers" -benchmem ./benchmarks/metastore
+```
+
+### CommitRecordBatchesV2 Lock Contention Testing
+
+```bash
+# Run all concurrent writer benchmarks
+go test -bench=BenchmarkCommitRecordBatchesV2_Concurrent -benchmem ./benchmarks/metastore
+
+# Test specific writer concurrency levels
+go test -bench=BenchmarkCommitRecordBatchesV2_Concurrent2Writers -benchmem -v ./benchmarks/metastore
+go test -bench=BenchmarkCommitRecordBatchesV2_Concurrent4Writers -benchmem -v ./benchmarks/metastore
+
+# Compare high vs low contention scenarios
+go test -bench="BenchmarkCommitRecordBatchesV2_HighContention|BenchmarkCommitRecordBatchesV2_LowContention" -benchmem ./benchmarks/metastore
+
+# Test partition strategy impact
+go test -bench=BenchmarkCommitRecordBatchesV2_.*Partitions -benchmem ./benchmarks/metastore
+
+# Stress test with many writers
+go test -bench=BenchmarkCommitRecordBatchesV2_Concurrent16Writers -benchmem -v ./benchmarks/metastore
 ```
 
 ### Advanced Options
@@ -119,11 +205,26 @@ go test -bench=BenchmarkMaterializeRecordBatchEvents_Medium -benchmem -v ./inter
 
 ### Custom Performance Metrics
 
+#### MaterializeRecordBatchEvents Metrics
+
 - **Events Processed**: Number of RecordBatchEvents materialized
 - **Partitions Updated**: Number of TopicPartitions with updated end_offset
 - **Record Batches Created**: Number of RecordBatchV2 records inserted
 - **Execution Time**: Actual MaterializeRecordBatchEvents execution time
 - **Events/Second**: Throughput metric for performance comparison
+
+#### CommitRecordBatchesV2 Metrics
+
+- **Total Commits**: Number of commit operations performed
+- **Total Batches**: Number of RecordBatchV2 records committed
+- **Total Records**: Total number of records across all batches
+- **Partitions Updated**: Number of TopicPartitions with updated end_offset
+- **Average Commit Latency**: Average time per commit operation (ms)
+- **Batches/Second**: Batch commit throughput metric
+- **Records/Second**: Record commit throughput metric
+- **Concurrent Writers**: Number of writers running simultaneously
+- **Partition Strategy**: Distribution strategy used
+  (concentrated/distributed/random)
 
 ## Sample Output
 
@@ -153,6 +254,60 @@ BenchmarkMaterializeRecordBatchEvents_Concurrent2Indexers-8   	      72	  168985
     metastore_bench_test.go:317: Record Batches Created: 1000
     metastore_bench_test.go:318: Execution Time: 16ms
     metastore_bench_test.go:322: Events/Second: 62500.00
+```
+
+### CommitRecordBatchesV2 Single Writer Benchmark
+
+```
+BenchmarkCommitRecordBatchesV2_Medium-8   	       1	  48269292 ns/op	 4706048 B/op	   32208 allocs/op
+--- BENCH: BenchmarkCommitRecordBatchesV2_Medium-8
+    metastore_bench_test.go:870: Scenario: MediumCommit
+    metastore_bench_test.go:871: Concurrent Writers: 1
+    metastore_bench_test.go:872: Partition Strategy: distributed
+    metastore_bench_test.go:873: Total Commits: 100
+    metastore_bench_test.go:874: Total Batches: 5000
+    metastore_bench_test.go:875: Total Records: 1374200
+    metastore_bench_test.go:876: Partitions Updated: 12
+    metastore_bench_test.go:877: Execution Time: 48ms
+    metastore_bench_test.go:878: Average Commit Latency: 0.48ms
+    metastore_bench_test.go:881: Batches/Second: 104166.67
+    metastore_bench_test.go:884: Records/Second: 28629166.67
+```
+
+### CommitRecordBatchesV2 Concurrent Writers Benchmark
+
+```
+BenchmarkCommitRecordBatchesV2_Concurrent2Writers-8   	       1	 372976499 ns/op	111289240 B/op	  634749 allocs/op
+--- BENCH: BenchmarkCommitRecordBatchesV2_Concurrent2Writers-8
+    metastore_bench_test.go:870: Scenario: Concurrent2Writers
+    metastore_bench_test.go:871: Concurrent Writers: 2
+    metastore_bench_test.go:872: Partition Strategy: distributed
+    metastore_bench_test.go:873: Total Commits: 300
+    metastore_bench_test.go:874: Total Batches: 15000
+    metastore_bench_test.go:875: Total Records: 4116662
+    metastore_bench_test.go:876: Partitions Updated: 12
+    metastore_bench_test.go:877: Execution Time: 372ms
+    metastore_bench_test.go:878: Average Commit Latency: 1.24ms
+    metastore_bench_test.go:881: Batches/Second: 40322.58
+    metastore_bench_test.go:884: Records/Second: 11066295.70
+```
+
+### CommitRecordBatchesV2 High Contention Benchmark
+
+```
+BenchmarkCommitRecordBatchesV2_HighContention-8   	       1	 333745500 ns/op	80670224 B/op	  478288 allocs/op
+--- BENCH: BenchmarkCommitRecordBatchesV2_HighContention-8
+    metastore_bench_test.go:870: Scenario: HighContentionCommit
+    metastore_bench_test.go:871: Concurrent Writers: 4
+    metastore_bench_test.go:872: Partition Strategy: concentrated
+    metastore_bench_test.go:873: Total Commits: 400
+    metastore_bench_test.go:874: Total Batches: 10000
+    metastore_bench_test.go:875: Total Records: 299837
+    metastore_bench_test.go:876: Partitions Updated: 2
+    metastore_bench_test.go:877: Execution Time: 333ms
+    metastore_bench_test.go:878: Average Commit Latency: 0.83ms
+    metastore_bench_test.go:881: Batches/Second: 30030.03
+    metastore_bench_test.go:884: Records/Second: 900411.41
 ```
 
 ## Interpreting Results
