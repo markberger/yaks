@@ -296,3 +296,102 @@ func findBatchByS3(batches []RecordBatch, s3Path string) *RecordBatch {
 	}
 	return nil
 }
+
+func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_Basic() {
+	metastore := s.TestDB.InitMetastore()
+	T := s.T()
+
+	// Setup: Create a TopicV2 and TopicPartition
+	topicName := "test-topic-v2"
+	err := metastore.CreateTopicV2(topicName, 1)
+	require.NoError(T, err)
+
+	// Get the created topic
+	topic := metastore.GetTopicByName(topicName)
+	require.NotNil(T, topic)
+
+	// Create some unprocessed RecordBatchEvents
+	events := []RecordBatchEvent{
+		{
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  5,
+			S3Key:     "s3://bucket/topic/partition-0/batch-1.parquet",
+			Processed: false,
+		},
+		{
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  3,
+			S3Key:     "s3://bucket/topic/partition-0/batch-2.parquet",
+			Processed: false,
+		},
+	}
+
+	err = metastore.CommitRecordBatchEvents(events)
+	require.NoError(T, err)
+
+	// Execute: Call MaterializeRecordBatchEvents
+	err = metastore.MaterializeRecordBatchEvents(50)
+	require.NoError(T, err)
+
+	// Verify: Check that RecordBatchV2 records were created
+	recordBatchesV2, err := metastore.GetRecordBatchV2(topicName, 0)
+	require.NoError(T, err)
+	require.Len(T, recordBatchesV2, 2)
+
+	// Find batches by S3Key instead of assuming order
+	var batch1, batch2 *RecordBatchV2
+	for i := range recordBatchesV2 {
+		if recordBatchesV2[i].S3Key == "s3://bucket/topic/partition-0/batch-1.parquet" {
+			batch1 = &recordBatchesV2[i]
+		} else if recordBatchesV2[i].S3Key == "s3://bucket/topic/partition-0/batch-2.parquet" {
+			batch2 = &recordBatchesV2[i]
+		}
+	}
+	require.NotNil(T, batch1, "batch-1 not found")
+	require.NotNil(T, batch2, "batch-2 not found")
+
+	// Verify both batches have correct basic properties
+	assert.Equal(T, topic.ID, batch1.TopicID)
+	assert.Equal(T, int32(0), batch1.Partition)
+	assert.Equal(T, topic.ID, batch2.TopicID)
+	assert.Equal(T, int32(0), batch2.Partition)
+
+	// Since offset calculation depends on ID order (which batch was processed first),
+	// we need to determine which batch has the lower start offset
+	var firstBatch, secondBatch *RecordBatchV2
+	if batch1.StartOffset < batch2.StartOffset {
+		firstBatch, secondBatch = batch1, batch2
+	} else {
+		firstBatch, secondBatch = batch2, batch1
+	}
+
+	// Verify the first processed batch (starts from partition EndOffset=0)
+	assert.Equal(T, int64(0), firstBatch.StartOffset)
+	if firstBatch.S3Key == "s3://bucket/topic/partition-0/batch-1.parquet" {
+		// batch-1 was processed first (5 records)
+		assert.Equal(T, int64(5), firstBatch.EndOffset)
+		assert.Equal(T, int64(5), secondBatch.StartOffset)
+		assert.Equal(T, int64(8), secondBatch.EndOffset)
+	} else {
+		// batch-2 was processed first (3 records)
+		assert.Equal(T, int64(3), firstBatch.EndOffset)
+		assert.Equal(T, int64(3), secondBatch.StartOffset)
+		assert.Equal(T, int64(8), secondBatch.EndOffset)
+	}
+
+	// Verify: Check that TopicPartition end_offset was updated using GetTopicPartitions
+	partitions, err := metastore.GetTopicPartitions(topicName)
+	require.NoError(T, err)
+	require.Len(T, partitions, 1)
+	assert.Equal(T, int64(8), partitions[0].EndOffset)
+
+	// Verify: Check that RecordBatchEvents were marked as processed
+	processedEvents, err := metastore.GetRecordBatchEvents(topicName)
+	require.NoError(T, err)
+	require.Len(T, processedEvents, 2)
+	for _, event := range processedEvents {
+		assert.True(T, event.Processed, "Event should be marked as processed")
+	}
+}
