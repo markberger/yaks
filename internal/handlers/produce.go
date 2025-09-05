@@ -13,41 +13,27 @@ import (
 	"github.com/twmb/franz-go/pkg/kmsg"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 type ProduceRequestHandler struct {
 	metastore  metastore.Metastore
 	bucketName string
-	s3Client   *s3.Client
+	s3Client   S3Client
 }
 
 func NewProduceRequestHandler(m metastore.Metastore) *ProduceRequestHandler {
-	ctx := context.Background()
-	localstackEndpoint := "http://localhost:4566"
+	s3Client := CreateS3Client(DefaultS3Config())
+	return NewProduceRequestHandlerWithS3(m, "test-bucket", s3Client)
+}
 
-	awsAccessKeyID := "test"
-	awsSecretAccessKey := "test"
-	staticCredentialsProvider := credentials.NewStaticCredentialsProvider(awsAccessKeyID, awsSecretAccessKey, "")
-
-	// Load config with handcoded creds
-	cfg, err := config.LoadDefaultConfig(ctx,
-		config.WithRegion("us-east-1"),
-		config.WithCredentialsProvider(staticCredentialsProvider),
-	)
-	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
+// NewProduceRequestHandlerWithS3 creates a handler with injectable S3 client for testing
+func NewProduceRequestHandlerWithS3(m metastore.Metastore, bucketName string, s3Client S3Client) *ProduceRequestHandler {
+	return &ProduceRequestHandler{
+		metastore:  m,
+		bucketName: bucketName,
+		s3Client:   s3Client,
 	}
-
-	// Create s3Client. Override endpoint and force path style for Localstack
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(localstackEndpoint)
-		o.UsePathStyle = true
-	})
-
-	return &ProduceRequestHandler{m, "test-bucket", client}
 }
 func (h *ProduceRequestHandler) Key() kmsg.Key     { return kmsg.Produce }
 func (h *ProduceRequestHandler) MinVersion() int16 { return 3 }
@@ -62,13 +48,25 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	response.SetVersion(request.GetVersion())
 	response.ThrottleMillis = 0
 
-	for _, topic := range request.Topics {
+	// Structure to track batch information for mapping results back to responses
+	type batchInfo struct {
+		batch          metastore.RecordBatchV2
+		topicIndex     int
+		partitionIndex int
+		numRecords     int32
+	}
+
+	var allBatches []metastore.RecordBatchV2
+	var batchInfos []batchInfo
+
+	// Phase 1: Process all topics/partitions, validate, upload to S3, and collect batches
+	for topicIndex, topic := range request.Topics {
 		var topicResponse kmsg.ProduceResponseTopic
 		topicResponse.Topic = topic.Topic
 
 		metaTopic := h.metastore.GetTopicByName(topic.Topic)
 
-		for _, partition := range topic.Partitions {
+		for partitionIndex, partition := range topic.Partitions {
 			partitionResponse := kmsg.NewProduceResponseTopicPartition()
 			partitionResponse.Partition = partition.Partition
 
@@ -105,27 +103,48 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 				return nil, err
 			}
 
-			// Register RecordBatches with metastore
-			batchCommitInputs := []metastore.RecordBatchV2{
-				{
-					TopicID:   metaTopic.ID,
-					Partition: partition.Partition,
-					NRecords:  int64(recordBatch.NumRecords),
-					S3Key:     key,
-				},
+			// Collect batch for later database commit
+			batch := metastore.RecordBatchV2{
+				TopicID:   metaTopic.ID,
+				Partition: partition.Partition,
+				NRecords:  int64(recordBatch.NumRecords),
+				S3Key:     key,
 			}
-			batchCommitOutputs, err := h.metastore.CommitRecordBatchesV2(batchCommitInputs)
-			if err != nil || len(batchCommitOutputs) != 1 {
-				return nil, fmt.Errorf("record commit failed: %v", err)
-			}
+			allBatches = append(allBatches, batch)
+			batchInfos = append(batchInfos, batchInfo{
+				batch:          batch,
+				topicIndex:     topicIndex,
+				partitionIndex: partitionIndex,
+				numRecords:     recordBatch.NumRecords,
+			})
 
-			// Add response details
-			log.Infof("record batch has %d records", recordBatch.NumRecords)
+			// Add successful partition response (will be updated with base offset later)
 			partitionResponse.ErrorCode = 0
-			partitionResponse.BaseOffset = batchCommitOutputs[0].BaseOffset
 			topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
 		}
 		response.Topics = append(response.Topics, topicResponse)
+	}
+
+	// Phase 2: Commit all batches to database in a single transaction (if we have any successful batches)
+	if len(allBatches) > 0 {
+		batchCommitOutputs, err := h.metastore.CommitRecordBatchesV2(allBatches)
+		if err != nil {
+			return nil, fmt.Errorf("record commit failed: %v", err)
+		}
+
+		if len(batchCommitOutputs) != len(allBatches) {
+			return nil, fmt.Errorf("record commit returned unexpected number of results: expected %d, got %d", len(allBatches), len(batchCommitOutputs))
+		}
+
+		// Phase 3: Map database results back to partition responses
+		for i, output := range batchCommitOutputs {
+			batchInfo := batchInfos[i]
+
+			// Find the corresponding partition response and update it with the base offset
+			topicResponse := &response.Topics[batchInfo.topicIndex]
+			partitionResponse := &topicResponse.Partitions[batchInfo.partitionIndex]
+			partitionResponse.BaseOffset = output.BaseOffset
+		}
 	}
 
 	return &response, nil
