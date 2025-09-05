@@ -87,7 +87,7 @@ func (s *IntegrationTestsSuite) TestProduceKgo() {
 	require.NoError(T, err)
 	require.Len(T, batches, 1)
 	require.Equal(T, batches[0].StartOffset, int64(0))
-	require.Equal(T, batches[0].EndOffset, int64(1))
+	require.Equal(T, batches[0].StartOffset+batches[0].NRecords, int64(1))
 
 	// Produce another message so that we have two RecordBatches
 	record = &kgo.Record{Topic: "test-topic", Value: []byte("foo")}
@@ -102,9 +102,9 @@ func (s *IntegrationTestsSuite) TestProduceKgo() {
 	require.NoError(T, err)
 	require.Len(T, batches, 2)
 	require.Equal(T, batches[0].StartOffset, int64(0))
-	require.Equal(T, batches[0].EndOffset, int64(1))
+	require.Equal(T, batches[0].StartOffset+batches[0].NRecords, int64(1))
 	require.Equal(T, batches[1].StartOffset, int64(1))
-	require.Equal(T, batches[1].EndOffset, int64(2))
+	require.Equal(T, batches[1].StartOffset+batches[1].NRecords, int64(2))
 
 	// Check we can fetch the messages
 	cl.AddConsumePartitions(map[string]map[int32]kgo.Offset{

@@ -324,14 +324,14 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_Basic() {
 	assert.Equal(T, int64(0), firstBatch.StartOffset)
 	if firstBatch.S3Key == "s3://bucket/topic/partition-0/batch-1.parquet" {
 		// batch-1 was processed first (5 records)
-		assert.Equal(T, int64(5), firstBatch.EndOffset)
+		assert.Equal(T, int64(5), firstBatch.StartOffset+firstBatch.NRecords)
 		assert.Equal(T, int64(5), secondBatch.StartOffset)
-		assert.Equal(T, int64(8), secondBatch.EndOffset)
+		assert.Equal(T, int64(8), secondBatch.StartOffset+secondBatch.NRecords)
 	} else {
 		// batch-2 was processed first (3 records)
-		assert.Equal(T, int64(3), firstBatch.EndOffset)
+		assert.Equal(T, int64(3), firstBatch.StartOffset+firstBatch.NRecords)
 		assert.Equal(T, int64(3), secondBatch.StartOffset)
-		assert.Equal(T, int64(8), secondBatch.EndOffset)
+		assert.Equal(T, int64(8), secondBatch.StartOffset+secondBatch.NRecords)
 	}
 
 	// Verify: Check that TopicPartition end_offset was updated using GetTopicPartitions
@@ -447,13 +447,13 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionOffs
 	// Verify window function calculation for partition 0
 	// Expected: [0,5), [5,8), [8,15)
 	assert.Equal(T, int64(0), partition0Batches[0].StartOffset, "First batch should start at 0")
-	assert.Equal(T, int64(5), partition0Batches[0].EndOffset, "First batch should end at 5")
+	assert.Equal(T, int64(5), partition0Batches[0].StartOffset+partition0Batches[0].NRecords, "First batch should end at 5")
 
 	assert.Equal(T, int64(5), partition0Batches[1].StartOffset, "Second batch should start at 5")
-	assert.Equal(T, int64(8), partition0Batches[1].EndOffset, "Second batch should end at 8")
+	assert.Equal(T, int64(8), partition0Batches[1].StartOffset+partition0Batches[1].NRecords, "Second batch should end at 8")
 
 	assert.Equal(T, int64(8), partition0Batches[2].StartOffset, "Third batch should start at 8")
-	assert.Equal(T, int64(15), partition0Batches[2].EndOffset, "Third batch should end at 15")
+	assert.Equal(T, int64(15), partition0Batches[2].StartOffset+partition0Batches[2].NRecords, "Third batch should end at 15")
 
 	// Verify: Check RecordBatchV2 records for partition 1
 	// Filter batches by partition 1
@@ -477,10 +477,10 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionOffs
 	// Verify window function calculation for partition 1 (independent of partition 0)
 	// Expected: [0,4), [4,6)
 	assert.Equal(T, int64(0), partition1Batches[0].StartOffset, "First batch in partition 1 should start at 0")
-	assert.Equal(T, int64(4), partition1Batches[0].EndOffset, "First batch in partition 1 should end at 4")
+	assert.Equal(T, int64(4), partition1Batches[0].StartOffset+partition1Batches[0].NRecords, "First batch in partition 1 should end at 4")
 
 	assert.Equal(T, int64(4), partition1Batches[1].StartOffset, "Second batch in partition 1 should start at 4")
-	assert.Equal(T, int64(6), partition1Batches[1].EndOffset, "Second batch in partition 1 should end at 6")
+	assert.Equal(T, int64(6), partition1Batches[1].StartOffset+partition1Batches[1].NRecords, "Second batch in partition 1 should end at 6")
 
 	// Verify: Check that TopicPartition end_offsets were updated correctly
 	partitions, err := metastore.GetTopicPartitions(topicName)
@@ -603,14 +603,14 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionWith
 	assert.Equal(T, int64(8), firstNewBatch.StartOffset, "First new batch should start at 8 (continuing from existing offset)")
 	if firstNewBatch.S3Key == "s3://bucket/topic/partition-0/new-batch-1.parquet" {
 		// new-batch-1 was processed first (5 records)
-		assert.Equal(T, int64(13), firstNewBatch.EndOffset, "First new batch should end at 13")
+		assert.Equal(T, int64(13), firstNewBatch.StartOffset+firstNewBatch.NRecords, "First new batch should end at 13")
 		assert.Equal(T, int64(13), secondNewBatch.StartOffset, "Second new batch should start at 13")
-		assert.Equal(T, int64(16), secondNewBatch.EndOffset, "Second new batch should end at 16")
+		assert.Equal(T, int64(16), secondNewBatch.StartOffset+secondNewBatch.NRecords, "Second new batch should end at 16")
 	} else {
 		// new-batch-2 was processed first (3 records)
-		assert.Equal(T, int64(11), firstNewBatch.EndOffset, "First new batch should end at 11")
+		assert.Equal(T, int64(11), firstNewBatch.StartOffset+firstNewBatch.NRecords, "First new batch should end at 11")
 		assert.Equal(T, int64(11), secondNewBatch.StartOffset, "Second new batch should start at 11")
-		assert.Equal(T, int64(16), secondNewBatch.EndOffset, "Second new batch should end at 16")
+		assert.Equal(T, int64(16), secondNewBatch.StartOffset+secondNewBatch.NRecords, "Second new batch should end at 16")
 	}
 
 	// Verify: Check that TopicPartition end_offset was updated to final value
@@ -715,13 +715,13 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionOrde
 	// 3. "third-by-id" (ID=uuid3): [8, 15)
 
 	assert.Equal(T, int64(0), firstBatch.StartOffset, "First batch should start at 0 (processed first by ID)")
-	assert.Equal(T, int64(5), firstBatch.EndOffset, "First batch should end at 5")
+	assert.Equal(T, int64(5), firstBatch.StartOffset+firstBatch.NRecords, "First batch should end at 5")
 
 	assert.Equal(T, int64(5), secondBatch.StartOffset, "Second batch should start at 5 (processed second by ID)")
-	assert.Equal(T, int64(8), secondBatch.EndOffset, "Second batch should end at 8")
+	assert.Equal(T, int64(8), secondBatch.StartOffset+secondBatch.NRecords, "Second batch should end at 8")
 
 	assert.Equal(T, int64(8), thirdBatch.StartOffset, "Third batch should start at 8 (processed third by ID)")
-	assert.Equal(T, int64(15), thirdBatch.EndOffset, "Third batch should end at 15")
+	assert.Equal(T, int64(15), thirdBatch.StartOffset+thirdBatch.NRecords, "Third batch should end at 15")
 
 	// Verify: Check that TopicPartition end_offset was updated correctly
 	partitions, err := metastore.GetTopicPartitions(topicName)
@@ -842,7 +842,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_BatchLimit() {
 	// The single batch should span [0, 5) and correspond to the first event
 	batch := recordBatches[0]
 	assert.Equal(T, int64(0), batch.StartOffset, "Single batch should start at 0")
-	assert.Equal(T, int64(5), batch.EndOffset, "Single batch should end at 5")
+	assert.Equal(T, int64(5), batch.StartOffset+batch.NRecords, "Single batch should end at 5")
 	assert.Equal(T, "s3://bucket/topic/batch-1.parquet", batch.S3Key, "Batch should correspond to first event")
 }
 
@@ -891,11 +891,10 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_SingleBatchNewPartition()
 	// Create a single batch for the new partition
 	batches := []RecordBatchV2{
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0,  // Will be calculated by the function
-			EndOffset:   10, // Will be calculated by the function
-			S3Key:       "s3://bucket/topic/partition-0/batch-1.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  10,
+			S3Key:     "s3://bucket/topic/partition-0/batch-1.parquet",
 		},
 	}
 
@@ -920,7 +919,7 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_SingleBatchNewPartition()
 	assert.Equal(T, topic.ID, batch.TopicID, "Topic ID should match")
 	assert.Equal(T, int32(0), batch.Partition, "Partition should be 0")
 	assert.Equal(T, int64(0), batch.StartOffset, "Start offset should be 0")
-	assert.Equal(T, int64(10), batch.EndOffset, "End offset should be 10")
+	assert.Equal(T, int64(10), batch.StartOffset+batch.NRecords, "End offset should be 10")
 	assert.Equal(T, batches[0].S3Key, batch.S3Key, "S3 key should match")
 
 	// Verify partition end_offset was updated
@@ -945,11 +944,10 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_SingleBatchExistingPartit
 	// First, commit an initial batch to establish existing data
 	initialBatches := []RecordBatchV2{
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0,
-			EndOffset:   5,
-			S3Key:       "s3://bucket/topic/partition-0/initial-batch.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  5,
+			S3Key:     "s3://bucket/topic/partition-0/initial-batch.parquet",
 		},
 	}
 
@@ -959,11 +957,10 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_SingleBatchExistingPartit
 	// Now commit a second batch that should continue from offset 5
 	secondBatches := []RecordBatchV2{
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0, // Will be calculated by the function
-			EndOffset:   8, // Will be calculated by the function (5 + 8 = 13)
-			S3Key:       "s3://bucket/topic/partition-0/second-batch.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  8,
+			S3Key:     "s3://bucket/topic/partition-0/second-batch.parquet",
 		},
 	}
 
@@ -988,7 +985,7 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_SingleBatchExistingPartit
 	secondBatch := findBatchV2ByS3(recordBatches, secondBatches[0].S3Key)
 	require.NotNil(T, secondBatch, "Second batch should exist")
 	assert.Equal(T, int64(5), secondBatch.StartOffset, "Second batch should start at offset 5")
-	assert.Equal(T, int64(13), secondBatch.EndOffset, "Second batch should end at offset 13")
+	assert.Equal(T, int64(13), secondBatch.StartOffset+secondBatch.NRecords, "Second batch should end at offset 13")
 
 	// Verify partition end_offset was updated
 	partitions, err := metastore.GetTopicPartitions(topicName)
@@ -1012,25 +1009,22 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_MultipleBatchesSamePartit
 	// Create multiple batches for the same partition
 	batches := []RecordBatchV2{
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   5, // Size: 5
-			S3Key:       "s3://bucket/topic/partition-0/batch-1.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  5,
+			S3Key:     "s3://bucket/topic/partition-0/batch-1.parquet",
 		},
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   3, // Size: 3
-			S3Key:       "s3://bucket/topic/partition-0/batch-2.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  3,
+			S3Key:     "s3://bucket/topic/partition-0/batch-2.parquet",
 		},
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   7, // Size: 7
-			S3Key:       "s3://bucket/topic/partition-0/batch-3.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  7,
+			S3Key:     "s3://bucket/topic/partition-0/batch-3.parquet",
 		},
 	}
 
@@ -1067,13 +1061,13 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_MultipleBatchesSamePartit
 	require.NotNil(T, batch3, "Batch 3 should exist")
 
 	assert.Equal(T, int64(0), batch1.StartOffset, "Batch 1 should start at 0")
-	assert.Equal(T, int64(5), batch1.EndOffset, "Batch 1 should end at 5")
+	assert.Equal(T, int64(5), batch1.StartOffset+batch1.NRecords, "Batch 1 should end at 5")
 
 	assert.Equal(T, int64(5), batch2.StartOffset, "Batch 2 should start at 5")
-	assert.Equal(T, int64(8), batch2.EndOffset, "Batch 2 should end at 8")
+	assert.Equal(T, int64(8), batch2.StartOffset+batch2.NRecords, "Batch 2 should end at 8")
 
 	assert.Equal(T, int64(8), batch3.StartOffset, "Batch 3 should start at 8")
-	assert.Equal(T, int64(15), batch3.EndOffset, "Batch 3 should end at 15")
+	assert.Equal(T, int64(15), batch3.StartOffset+batch3.NRecords, "Batch 3 should end at 15")
 
 	// Verify partition end_offset was updated to the final value
 	partitions, err := metastore.GetTopicPartitions(topicName)
@@ -1097,25 +1091,22 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_MultipleBatchesDifferentP
 	// Create batches for different partitions
 	batches := []RecordBatchV2{
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   5, // Size: 5
-			S3Key:       "s3://bucket/topic/partition-0/batch-1.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  5,
+			S3Key:     "s3://bucket/topic/partition-0/batch-1.parquet",
 		},
 		{
-			TopicID:     topic.ID,
-			Partition:   1,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   3, // Size: 3
-			S3Key:       "s3://bucket/topic/partition-1/batch-1.parquet",
+			TopicID:   topic.ID,
+			Partition: 1,
+			NRecords:  3,
+			S3Key:     "s3://bucket/topic/partition-1/batch-1.parquet",
 		},
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   4, // Size: 4
-			S3Key:       "s3://bucket/topic/partition-0/batch-2.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  4,
+			S3Key:     "s3://bucket/topic/partition-0/batch-2.parquet",
 		},
 	}
 
@@ -1153,13 +1144,13 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_MultipleBatchesDifferentP
 
 	// Verify partition 0 batches
 	assert.Equal(T, int64(0), p0batch1.StartOffset, "P0 batch 1 should start at 0")
-	assert.Equal(T, int64(5), p0batch1.EndOffset, "P0 batch 1 should end at 5")
+	assert.Equal(T, int64(5), p0batch1.StartOffset+p0batch1.NRecords, "P0 batch 1 should end at 5")
 	assert.Equal(T, int64(5), p0batch2.StartOffset, "P0 batch 2 should start at 5")
-	assert.Equal(T, int64(9), p0batch2.EndOffset, "P0 batch 2 should end at 9")
+	assert.Equal(T, int64(9), p0batch2.StartOffset+p0batch2.NRecords, "P0 batch 2 should end at 9")
 
 	// Verify partition 1 batch (independent offset calculation)
 	assert.Equal(T, int64(0), p1batch1.StartOffset, "P1 batch 1 should start at 0")
-	assert.Equal(T, int64(3), p1batch1.EndOffset, "P1 batch 1 should end at 3")
+	assert.Equal(T, int64(3), p1batch1.StartOffset+p1batch1.NRecords, "P1 batch 1 should end at 3")
 
 	// Verify both partition end_offsets were updated correctly
 	partitions, err := metastore.GetTopicPartitions(topicName)
@@ -1195,25 +1186,22 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_MultipleBatchesDifferentT
 	// Create batches for different topics
 	batches := []RecordBatchV2{
 		{
-			TopicID:     topic1.ID,
-			Partition:   0,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   5, // Size: 5
-			S3Key:       "s3://bucket/topic1/partition-0/batch-1.parquet",
+			TopicID:   topic1.ID,
+			Partition: 0,
+			NRecords:  5,
+			S3Key:     "s3://bucket/topic1/partition-0/batch-1.parquet",
 		},
 		{
-			TopicID:     topic2.ID,
-			Partition:   0,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   3, // Size: 3
-			S3Key:       "s3://bucket/topic2/partition-0/batch-1.parquet",
+			TopicID:   topic2.ID,
+			Partition: 0,
+			NRecords:  3,
+			S3Key:     "s3://bucket/topic2/partition-0/batch-1.parquet",
 		},
 		{
-			TopicID:     topic1.ID,
-			Partition:   0,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   4, // Size: 4
-			S3Key:       "s3://bucket/topic1/partition-0/batch-2.parquet",
+			TopicID:   topic1.ID,
+			Partition: 0,
+			NRecords:  4,
+			S3Key:     "s3://bucket/topic1/partition-0/batch-2.parquet",
 		},
 	}
 
@@ -1271,39 +1259,34 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_WindowFunctionOffsetCalcu
 	// The SQL uses: sum(inp.n_record) over (partition by inp.topic_id, inp.partition order by inp.input_idx)
 	batches := []RecordBatchV2{
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   5, // Size: 5
-			S3Key:       "s3://bucket/topic/partition-0/batch-1.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  5,
+			S3Key:     "s3://bucket/topic/partition-0/batch-1.parquet",
 		},
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   3, // Size: 3
-			S3Key:       "s3://bucket/topic/partition-0/batch-2.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  3,
+			S3Key:     "s3://bucket/topic/partition-0/batch-2.parquet",
 		},
 		{
-			TopicID:     topic.ID,
-			Partition:   1,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   4, // Size: 4
-			S3Key:       "s3://bucket/topic/partition-1/batch-1.parquet",
+			TopicID:   topic.ID,
+			Partition: 1,
+			NRecords:  4,
+			S3Key:     "s3://bucket/topic/partition-1/batch-1.parquet",
 		},
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   7, // Size: 7
-			S3Key:       "s3://bucket/topic/partition-0/batch-3.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  7,
+			S3Key:     "s3://bucket/topic/partition-0/batch-3.parquet",
 		},
 		{
-			TopicID:     topic.ID,
-			Partition:   1,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   2, // Size: 2
-			S3Key:       "s3://bucket/topic/partition-1/batch-2.parquet",
+			TopicID:   topic.ID,
+			Partition: 1,
+			NRecords:  2,
+			S3Key:     "s3://bucket/topic/partition-1/batch-2.parquet",
 		},
 	}
 
@@ -1358,17 +1341,17 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_WindowFunctionOffsetCalcu
 
 	// Verify partition 0 window function calculation: [0,5), [5,8), [8,15)
 	assert.Equal(T, int64(0), p0batch1.StartOffset, "P0 batch 1 should start at 0")
-	assert.Equal(T, int64(5), p0batch1.EndOffset, "P0 batch 1 should end at 5")
+	assert.Equal(T, int64(5), p0batch1.StartOffset+p0batch1.NRecords, "P0 batch 1 should end at 5")
 	assert.Equal(T, int64(5), p0batch2.StartOffset, "P0 batch 2 should start at 5")
-	assert.Equal(T, int64(8), p0batch2.EndOffset, "P0 batch 2 should end at 8")
+	assert.Equal(T, int64(8), p0batch2.StartOffset+p0batch2.NRecords, "P0 batch 2 should end at 8")
 	assert.Equal(T, int64(8), p0batch3.StartOffset, "P0 batch 3 should start at 8")
-	assert.Equal(T, int64(15), p0batch3.EndOffset, "P0 batch 3 should end at 15")
+	assert.Equal(T, int64(15), p0batch3.StartOffset+p0batch3.NRecords, "P0 batch 3 should end at 15")
 
 	// Verify partition 1 window function calculation: [0,4), [4,6)
 	assert.Equal(T, int64(0), p1batch1.StartOffset, "P1 batch 1 should start at 0")
-	assert.Equal(T, int64(4), p1batch1.EndOffset, "P1 batch 1 should end at 4")
+	assert.Equal(T, int64(4), p1batch1.StartOffset+p1batch1.NRecords, "P1 batch 1 should end at 4")
 	assert.Equal(T, int64(4), p1batch2.StartOffset, "P1 batch 2 should start at 4")
-	assert.Equal(T, int64(6), p1batch2.EndOffset, "P1 batch 2 should end at 6")
+	assert.Equal(T, int64(6), p1batch2.StartOffset+p1batch2.NRecords, "P1 batch 2 should end at 6")
 
 	// Verify partition end_offsets were updated correctly
 	partitions, err := metastore.GetTopicPartitions(topicName)
@@ -1399,11 +1382,10 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_WindowFunctionWithExistin
 	// First, commit an initial batch to establish existing data
 	initialBatches := []RecordBatchV2{
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0,
-			EndOffset:   8,
-			S3Key:       "s3://bucket/topic/partition-0/initial-batch.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  8,
+			S3Key:     "s3://bucket/topic/partition-0/initial-batch.parquet",
 		},
 	}
 
@@ -1413,18 +1395,16 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_WindowFunctionWithExistin
 	// Now commit new batches that should continue from offset 8
 	newBatches := []RecordBatchV2{
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   5, // Size: 5
-			S3Key:       "s3://bucket/topic/partition-0/new-batch-1.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  5,
+			S3Key:     "s3://bucket/topic/partition-0/new-batch-1.parquet",
 		},
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0, // Will be calculated
-			EndOffset:   3, // Size: 3
-			S3Key:       "s3://bucket/topic/partition-0/new-batch-2.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  3,
+			S3Key:     "s3://bucket/topic/partition-0/new-batch-2.parquet",
 		},
 	}
 
@@ -1454,9 +1434,9 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_WindowFunctionWithExistin
 
 	// Verify window function calculation continues from existing offset
 	assert.Equal(T, int64(8), newBatch1.StartOffset, "New batch 1 should start at 8")
-	assert.Equal(T, int64(13), newBatch1.EndOffset, "New batch 1 should end at 13")
+	assert.Equal(T, int64(13), newBatch1.StartOffset+newBatch1.NRecords, "New batch 1 should end at 13")
 	assert.Equal(T, int64(13), newBatch2.StartOffset, "New batch 2 should start at 13")
-	assert.Equal(T, int64(16), newBatch2.EndOffset, "New batch 2 should end at 16")
+	assert.Equal(T, int64(16), newBatch2.StartOffset+newBatch2.NRecords, "New batch 2 should end at 16")
 
 	// Verify partition end_offset was updated to final value
 	partitions, err := metastore.GetTopicPartitions(topicName)
@@ -1477,21 +1457,19 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_GetSizeMethod() {
 	topic := metastore.GetTopicByName(topicName)
 	require.NotNil(T, topic)
 
-	// Create batches with different start/end offsets to test GetSize() method
+	// Create batches with different NRecords to test GetSize() method
 	batches := []RecordBatchV2{
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0,
-			EndOffset:   10, // Size: 10
-			S3Key:       "s3://bucket/topic/partition-0/batch-1.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  10, // Size: 10
+			S3Key:     "s3://bucket/topic/partition-0/batch-1.parquet",
 		},
 		{
-			TopicID:     topic.ID,
-			Partition:   0,
-			StartOffset: 0,
-			EndOffset:   5, // Size: 5
-			S3Key:       "s3://bucket/topic/partition-0/batch-2.parquet",
+			TopicID:   topic.ID,
+			Partition: 0,
+			NRecords:  5, // Size: 5
+			S3Key:     "s3://bucket/topic/partition-0/batch-2.parquet",
 		},
 	}
 
@@ -1520,9 +1498,9 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_GetSizeMethod() {
 	require.NotNil(T, batch2, "Batch 2 should exist")
 
 	assert.Equal(T, int64(0), batch1.StartOffset, "Batch 1 should start at 0")
-	assert.Equal(T, int64(10), batch1.EndOffset, "Batch 1 should end at 10")
+	assert.Equal(T, int64(10), batch1.StartOffset+batch1.NRecords, "Batch 1 should end at 10")
 	assert.Equal(T, int64(10), batch2.StartOffset, "Batch 2 should start at 10")
-	assert.Equal(T, int64(15), batch2.EndOffset, "Batch 2 should end at 15")
+	assert.Equal(T, int64(15), batch2.StartOffset+batch2.NRecords, "Batch 2 should end at 15")
 
 	// Test GetSize() method on committed batches
 	assert.Equal(T, int64(10), batch1.GetSize(), "Committed batch 1 size should be 10")

@@ -89,12 +89,12 @@ type RecordBatchV2 struct {
 	TopicID   uuid.UUID `gorm:"type:uuid; index"`
 	Topic     TopicV2   `gorm:"foreignKey:TopicID"`
 	Partition int32     `gorm:"type:integer; not null;"`
-	// Bounds are inclusive exclusive i.e. [StartOffset, EndOffset)
+	// StartOffset is the first offset in this batch (inclusive)
 	StartOffset int64  `gorm:"type:bigint; not null; check:start_offset >= 0"`
-	EndOffset   int64  `gorm:"type:bigint; not null; check:end_offset >= 0; check:end_offset > start_offset"`
+	NRecords    int64  `gorm:"type:bigint; not null; check:n_records >= 0"`
 	S3Key       string `gorm:"size:255; not null"`
 }
 
 func (r *RecordBatchV2) GetSize() int64 {
-	return r.EndOffset - r.StartOffset
+	return r.NRecords
 }

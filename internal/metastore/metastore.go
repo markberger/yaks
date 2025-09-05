@@ -278,7 +278,7 @@ func (m *GormMetastore) CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchC
 	for i, batch := range batches {
 		topicIDs[i] = batch.TopicID.String()
 		partitions[i] = batch.Partition
-		nRecords[i] = batch.GetSize()
+		nRecords[i] = batch.NRecords
 		s3Keys[i] = batch.S3Key
 	}
 
@@ -327,8 +327,8 @@ func (m *GormMetastore) CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchC
 		),
 
 		insert_batches as (
-			insert into record_batch_v2(topic_id, partition, start_offset, end_offset, s3_key)
-			select topic_id, partition, start_offset, end_offset, s3_key
+			insert into record_batch_v2(topic_id, partition, start_offset, n_records, s3_key)
+			select topic_id, partition, start_offset, n_record, s3_key
 			from offsets
 			returning topic_id, partition, start_offset, s3_key
 		),
@@ -337,7 +337,7 @@ func (m *GormMetastore) CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchC
 			update topic_partitions tp
 			set end_offset = sub.max_end_offset
 			from (
-				select topic_id, partition, max(end_offset) as max_end_offset
+				select topic_id, partition, max(start_offset + n_record) as max_end_offset
 				from offsets
 				group by topic_id, partition
 			) sub
@@ -422,8 +422,8 @@ func (m *GormMetastore) MaterializeRecordBatchEvents(nRecords int32) error {
 		),
 
 		insert_batches as (
-			insert into record_batch_v2(topic_id, partition, start_offset, end_offset, s3_key)
-			select topic_id, partition, start_offset, end_offset, s3_key
+			insert into record_batch_v2(topic_id, partition, start_offset, n_records, s3_key)
+			select topic_id, partition, start_offset, n_records, s3_key
 			from offsets
 			returning topic_id, partition
 		),
@@ -432,7 +432,7 @@ func (m *GormMetastore) MaterializeRecordBatchEvents(nRecords int32) error {
 			update topic_partitions tp
 			set end_offset = sub.max_end_offset
 			from (
-				select topic_id, partition, max(end_offset) as max_end_offset
+				select topic_id, partition, max(start_offset + n_records) as max_end_offset
 				from offsets
 				group by topic_id, partition
 			) sub
