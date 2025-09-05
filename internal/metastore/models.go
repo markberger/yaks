@@ -58,9 +58,9 @@ type TopicV2 struct {
 
 type TopicPartition struct {
 	BaseModel
-	TopicID   uuid.UUID `gorm:"type:uuid;index:idx_topic_partition,unique"`
+	TopicID   uuid.UUID `gorm:"type:uuid;index:idx_topic_partition,unique;index:idx_topic_partition_lookup"`
 	Topic     TopicV2   `gorm:"foreignKey:TopicID"`
-	Partition int32     `gorm:"type:integer;not null;index:idx_topic_partition,unique"`
+	Partition int32     `gorm:"type:integer;not null;index:idx_topic_partition,unique;index:idx_topic_partition_lookup"`
 	// Bounds are inclusive exclusive i.e. [StartOffset, EndOffset)
 	StartOffset int64 `gorm:"type:bigint;not null;check:start_offset >= 0"`
 	EndOffset   int64 `gorm:"type:bigint;not null;check:end_offset >= 0;check:end_offset >= start_offset"`
@@ -68,12 +68,12 @@ type TopicPartition struct {
 
 type RecordBatchEvent struct {
 	BaseModel
-	TopicID   uuid.UUID `gorm:"type:uuid; not null; index"`
+	TopicID   uuid.UUID `gorm:"type:uuid; not null; index; index:idx_rbe_unprocessed_ordered"`
 	Topic     TopicV2   `gorm:"foreignKey:TopicID"`
-	Partition int32     `gorm:"type:integer; not null;"`
+	Partition int32     `gorm:"type:integer; not null; index:idx_rbe_unprocessed_ordered"`
 	NRecords  int64     `gorm:"type:bigint; not null;"`
 	S3Key     string    `gorm:"size:255; not null"`
-	Processed bool      `gorm:"default:false"`
+	Processed bool      `gorm:"default:false; index:idx_rbe_unprocessed_ordered"`
 }
 
 type RecordBatchV2 struct {

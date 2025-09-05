@@ -2,12 +2,15 @@
 
 This benchmark suite provides comprehensive performance testing for the
 `MaterializeRecordBatchEvents` function to support query optimization efforts.
+It includes support for testing concurrent indexers to measure scalability and
+contention characteristics.
 
 ## Overview
 
 The benchmark suite tests various scenarios and configurations to help identify
 performance bottlenecks and measure the impact of optimizations outlined in
-`QUERY_OPTIMIZATIONS.md`.
+`QUERY_OPTIMIZATIONS.md`. The suite now supports concurrent indexer testing to
+evaluate how multiple indexers perform when running simultaneously.
 
 ## Benchmark Scenarios
 
@@ -36,6 +39,21 @@ Tests different `nRecords` parameter values:
 - BatchSize1000: Process 1,000 events at a time
 - BatchSize2000: Process 2,000 events at a time
 
+### Concurrent Indexer Benchmarks
+
+Tests multiple indexers running simultaneously to measure scalability and
+contention:
+
+- **Concurrent2Indexers**: 2 indexers processing events concurrently
+- **Concurrent4Indexers**: 4 indexers processing events concurrently
+- **Concurrent8Indexers**: 8 indexers processing events concurrently
+- **HighContentionConcurrent**: 4 indexers with high contention scenario
+- **MultiPartitionConcurrent**: 6 indexers with many partitions
+
+These benchmarks leverage the `FOR UPDATE SKIP LOCKED` mechanism in
+`MaterializeRecordBatchEvents` to safely process events concurrently without
+conflicts.
+
 ## Running Benchmarks
 
 ### Basic Usage
@@ -62,6 +80,20 @@ go test -bench=BenchmarkMaterializeRecordBatchEvents_Medium -benchmem -count=5 .
 
 # Compare results (requires benchcmp tool)
 benchcmp baseline.txt optimized.txt
+```
+
+### Concurrent Indexer Testing
+
+```bash
+# Run all concurrent indexer benchmarks
+go test -bench=BenchmarkMaterializeRecordBatchEvents_Concurrent -benchmem ./internal/metastore
+
+# Test specific concurrency levels
+go test -bench=BenchmarkMaterializeRecordBatchEvents_Concurrent2Indexers -benchmem -v ./internal/metastore
+go test -bench=BenchmarkMaterializeRecordBatchEvents_Concurrent4Indexers -benchmem -v ./internal/metastore
+
+# Compare single vs concurrent performance
+go test -bench="BenchmarkMaterializeRecordBatchEvents_Medium|BenchmarkMaterializeRecordBatchEvents_Concurrent2Indexers" -benchmem ./internal/metastore
 ```
 
 ### Advanced Options
@@ -95,15 +127,32 @@ go test -bench=BenchmarkMaterializeRecordBatchEvents_Medium -benchmem -v ./inter
 
 ## Sample Output
 
+### Single Indexer Benchmark
+
 ```
 BenchmarkMaterializeRecordBatchEvents_BatchSize1000-8   	       1	  19305584 ns/op	   13384 B/op	      58 allocs/op
 --- BENCH: BenchmarkMaterializeRecordBatchEvents_BatchSize1000-8
-    metastore_bench_test.go:265: Scenario: BatchSize1000
-    metastore_bench_test.go:266: Events Processed: 1000
-    metastore_bench_test.go:267: Partitions Updated: 20
-    metastore_bench_test.go:268: Record Batches Created: 1000
-    metastore_bench_test.go:269: Execution Time: 19ms
-    metastore_bench_test.go:273: Events/Second: 52631.58
+    metastore_bench_test.go:313: Scenario: BatchSize1000
+    metastore_bench_test.go:314: Concurrent Indexers: 1
+    metastore_bench_test.go:315: Events Processed: 1000
+    metastore_bench_test.go:316: Partitions Updated: 20
+    metastore_bench_test.go:317: Record Batches Created: 1000
+    metastore_bench_test.go:318: Execution Time: 19ms
+    metastore_bench_test.go:322: Events/Second: 52631.58
+```
+
+### Concurrent Indexer Benchmark
+
+```
+BenchmarkMaterializeRecordBatchEvents_Concurrent2Indexers-8   	      72	  16898543 ns/op	   52778 B/op	     345 allocs/op
+--- BENCH: BenchmarkMaterializeRecordBatchEvents_Concurrent2Indexers-8
+    metastore_bench_test.go:313: Scenario: Concurrent2Indexers
+    metastore_bench_test.go:314: Concurrent Indexers: 2
+    metastore_bench_test.go:315: Events Processed: 1000
+    metastore_bench_test.go:316: Partitions Updated: 20
+    metastore_bench_test.go:317: Record Batches Created: 1000
+    metastore_bench_test.go:318: Execution Time: 16ms
+    metastore_bench_test.go:322: Events/Second: 62500.00
 ```
 
 ## Interpreting Results
@@ -171,10 +220,62 @@ func BenchmarkMaterializeRecordBatchEvents_Custom(b *testing.B) {
 3. **Compare results**: Run both benchmarks and compare metrics
 4. **Validate correctness**: Ensure optimization produces same results
 
+### Adding Concurrent Indexer Scenarios
+
+```go
+// Define concurrent benchmark configuration
+var ConcurrentScenario = BenchmarkConfig{
+    Name:               "ConcurrentCustom",
+    NumTopics:          3,
+    PartitionsPerTopic: 6,
+    NumEvents:          1500,
+    MinRecordsPerEvent: 50,
+    MaxRecordsPerEvent: 200,
+    BatchSize:          250,
+    WithExistingData:   false,
+    NumIndexers:        3, // Key field for concurrent testing
+}
+
+// Create concurrent benchmark function
+func BenchmarkMaterializeRecordBatchEvents_ConcurrentCustom(b *testing.B) {
+    runBenchmarkScenario(b, ConcurrentScenario)
+}
+```
+
 ### Custom Metrics
 
 Extend `BenchmarkMetrics` struct and `collectBenchmarkMetrics` function to track
 additional performance indicators specific to your optimizations.
+
+## Concurrent Indexer Architecture
+
+### How It Works
+
+The concurrent indexer implementation leverages PostgreSQL's
+`FOR UPDATE SKIP LOCKED` mechanism to safely distribute work among multiple
+indexers:
+
+1. **Work Distribution**: Each indexer calls `MaterializeRecordBatchEvents` with
+   the same batch size
+2. **Lock Avoidance**: `SKIP LOCKED` ensures indexers don't block each other
+3. **Safe Concurrency**: No conflicts or duplicate processing
+4. **Automatic Load Balancing**: Work is distributed based on availability
+
+### Configuration Guidelines
+
+- **NumIndexers**: Start with 2-4 indexers, increase based on CPU cores and
+  database capacity
+- **BatchSize**: May need adjustment for concurrent scenarios - smaller batches
+  can improve distribution
+- **Event Count**: Ensure sufficient events to benefit from concurrency
+  (typically 2-3x the total batch size across all indexers)
+
+### Performance Considerations
+
+- **Database Connections**: Each indexer uses a database connection
+- **Lock Contention**: More indexers may increase lock contention on partitions
+- **Optimal Concurrency**: Test different indexer counts to find the sweet spot
+- **Resource Usage**: Monitor CPU and database load during concurrent execution
 
 ## Best Practices
 

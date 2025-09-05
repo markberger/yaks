@@ -3,6 +3,7 @@ package metastore
 import (
 	"fmt"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ type BenchmarkConfig struct {
 	MaxRecordsPerEvent int64
 	BatchSize          int32
 	WithExistingData   bool
+	NumIndexers        int // Number of concurrent indexers
 }
 
 // Predefined benchmark scenarios
@@ -33,6 +35,7 @@ var (
 		MaxRecordsPerEvent: 100,
 		BatchSize:          50,
 		WithExistingData:   false,
+		NumIndexers:        1,
 	}
 
 	MediumScenario = BenchmarkConfig{
@@ -44,6 +47,7 @@ var (
 		MaxRecordsPerEvent: 1000,
 		BatchSize:          500,
 		WithExistingData:   false,
+		NumIndexers:        1,
 	}
 
 	LargeScenario = BenchmarkConfig{
@@ -55,6 +59,7 @@ var (
 		MaxRecordsPerEvent: 5000,
 		BatchSize:          2000,
 		WithExistingData:   false,
+		NumIndexers:        1,
 	}
 
 	HighContentionScenario = BenchmarkConfig{
@@ -66,6 +71,7 @@ var (
 		MaxRecordsPerEvent: 10,
 		BatchSize:          1000,
 		WithExistingData:   false,
+		NumIndexers:        1,
 	}
 
 	ExistingOffsetsScenario = BenchmarkConfig{
@@ -77,6 +83,7 @@ var (
 		MaxRecordsPerEvent: 1000,
 		BatchSize:          250,
 		WithExistingData:   true,
+		NumIndexers:        1,
 	}
 )
 
@@ -144,10 +151,19 @@ func setupBenchmarkData(metastore *GormMetastore, config BenchmarkConfig) ([]Top
 		events = append(events, event)
 	}
 
-	// Commit all events
-	err := metastore.CommitRecordBatchEvents(events)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to commit record batch events: %w", err)
+	// Commit events in batches to handle large numbers of events efficiently
+	commitBatchSize := 1000 // Commit in batches of 5000 events
+	for i := 0; i < len(events); i += commitBatchSize {
+		end := i + commitBatchSize
+		if end > len(events) {
+			end = len(events)
+		}
+
+		batch := events[i:end]
+		err := metastore.CommitRecordBatchEvents(batch)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to commit record batch events (batch %d-%d): %w", i, end-1, err)
+		}
 	}
 
 	return topics, events, nil
@@ -206,9 +222,9 @@ func runBenchmarkScenario(b *testing.B, config BenchmarkConfig) {
 
 		b.StartTimer()
 
-		// Execute the function being benchmarked
+		// Execute the function being benchmarked with concurrent indexers
 		start := time.Now()
-		err = metastore.MaterializeRecordBatchEvents(config.BatchSize)
+		err = runConcurrentIndexers(metastore, config)
 		executionTime := time.Since(start)
 
 		b.StopTimer()
@@ -227,6 +243,85 @@ func runBenchmarkScenario(b *testing.B, config BenchmarkConfig) {
 			sqlDB.Close()
 		}
 	}
+}
+
+// runConcurrentIndexers runs multiple indexers concurrently
+func runConcurrentIndexers(metastore *GormMetastore, config BenchmarkConfig) error {
+	if config.NumIndexers <= 1 {
+		// Single indexer case - process all events
+		for {
+			err := metastore.MaterializeRecordBatchEvents(config.BatchSize)
+			if err != nil {
+				return err
+			}
+
+			// Check if there are more unprocessed events
+			hasMore, checkErr := hasUnprocessedEvents(metastore)
+			if checkErr != nil {
+				return checkErr
+			}
+			if !hasMore {
+				break
+			}
+		}
+		return nil
+	}
+
+	// Multiple indexers case
+	var wg sync.WaitGroup
+	errChan := make(chan error, config.NumIndexers)
+
+	// Start concurrent indexers
+	for i := 0; i < config.NumIndexers; i++ {
+		wg.Add(1)
+		go func(indexerID int) {
+			defer wg.Done()
+
+			// Each indexer continues processing until no more events are available
+			for {
+				// The MaterializeRecordBatchEvents function uses FOR UPDATE SKIP LOCKED
+				// so multiple indexers can safely run concurrently
+				err := metastore.MaterializeRecordBatchEvents(config.BatchSize)
+				if err != nil {
+					errChan <- fmt.Errorf("indexer %d failed: %w", indexerID, err)
+					return
+				}
+
+				// Check if there are more unprocessed events
+				hasMore, checkErr := hasUnprocessedEvents(metastore)
+				if checkErr != nil {
+					errChan <- fmt.Errorf("indexer %d failed to check for more events: %w", indexerID, checkErr)
+					return
+				}
+				if !hasMore {
+					break
+				}
+			}
+		}(i)
+	}
+
+	// Wait for all indexers to complete
+	wg.Wait()
+	close(errChan)
+
+	// Check for any errors
+	for err := range errChan {
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// hasUnprocessedEvents checks if there are any unprocessed events remaining
+func hasUnprocessedEvents(metastore *GormMetastore) (bool, error) {
+	var count int64
+	err := metastore.db.Model(&RecordBatchEvent{}).Where("processed = false").Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // collectBenchmarkMetrics gathers performance metrics after benchmark execution
@@ -263,6 +358,7 @@ func collectBenchmarkMetrics(metastore *GormMetastore, topics []TopicV2, origina
 // reportBenchmarkMetrics logs additional metrics beyond standard Go benchmark output
 func reportBenchmarkMetrics(b *testing.B, config BenchmarkConfig, metrics BenchmarkMetrics) {
 	b.Logf("Scenario: %s", config.Name)
+	b.Logf("Concurrent Indexers: %d", config.NumIndexers)
 	b.Logf("Events Processed: %d", metrics.EventsProcessed)
 	b.Logf("Partitions Updated: %d", metrics.PartitionsProcessed)
 	b.Logf("Record Batches Created: %d", metrics.RecordBatchesCreated)
@@ -337,6 +433,7 @@ func BenchmarkMaterializeRecordBatchEvents_MultiPartition(b *testing.B) {
 		MaxRecordsPerEvent: 500,
 		BatchSize:          1000,
 		WithExistingData:   false,
+		NumIndexers:        1,
 	}
 	runBenchmarkScenario(b, config)
 }
@@ -352,6 +449,65 @@ func BenchmarkMaterializeRecordBatchEvents_WindowFunctionStress(b *testing.B) {
 		MaxRecordsPerEvent: 5,
 		BatchSize:          2500,
 		WithExistingData:   false,
+		NumIndexers:        1,
+	}
+	runBenchmarkScenario(b, config)
+}
+
+// Concurrent indexer benchmarks
+
+func BenchmarkMaterializeRecordBatchEvents_Concurrent2Indexers(b *testing.B) {
+	config := MediumScenario
+	config.Name = "Concurrent2Indexers"
+	config.NumIndexers = 2
+	config.NumEvents = 50000 // More events to better test concurrency
+	runBenchmarkScenario(b, config)
+}
+
+func BenchmarkMaterializeRecordBatchEvents_Concurrent4Indexers(b *testing.B) {
+	config := MediumScenario
+	config.Name = "Concurrent4Indexers"
+	config.NumIndexers = 4
+	config.NumEvents = 50000 // More events to better test concurrency
+	runBenchmarkScenario(b, config)
+}
+
+func BenchmarkMaterializeRecordBatchEvents_Concurrent8Indexers(b *testing.B) {
+	config := LargeScenario
+	config.Name = "Concurrent8Indexers"
+	config.NumIndexers = 8
+	config.NumEvents = 50000 // More events to better test concurrency
+	runBenchmarkScenario(b, config)
+}
+
+// High contention with multiple indexers
+func BenchmarkMaterializeRecordBatchEvents_HighContentionConcurrent(b *testing.B) {
+	config := BenchmarkConfig{
+		Name:               "HighContentionConcurrent",
+		NumTopics:          3,
+		PartitionsPerTopic: 2,
+		NumEvents:          50000,
+		MinRecordsPerEvent: 1,
+		MaxRecordsPerEvent: 10,
+		BatchSize:          500,
+		WithExistingData:   false,
+		NumIndexers:        4,
+	}
+	runBenchmarkScenario(b, config)
+}
+
+// Multi-partition with concurrent indexers
+func BenchmarkMaterializeRecordBatchEvents_MultiPartitionConcurrent(b *testing.B) {
+	config := BenchmarkConfig{
+		Name:               "MultiPartitionConcurrent",
+		NumTopics:          5,
+		PartitionsPerTopic: 16,
+		NumEvents:          50000,
+		MinRecordsPerEvent: 50,
+		MaxRecordsPerEvent: 500,
+		BatchSize:          500,
+		WithExistingData:   false,
+		NumIndexers:        6,
 	}
 	runBenchmarkScenario(b, config)
 }

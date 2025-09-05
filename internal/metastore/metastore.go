@@ -345,6 +345,7 @@ func (m *GormMetastore) MaterializeRecordBatchEvents(nRecords int32) error {
 				from locked_events e
 
 			)
+			order by tp.topic_id, tp.partition
 			for update of tp
 		),
 
