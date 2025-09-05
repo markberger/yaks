@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markberger/yaks/internal/metastore"
+	"github.com/markberger/yaks/internal/s3_client"
 	log "github.com/sirupsen/logrus"
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kmsg"
@@ -19,16 +20,16 @@ import (
 type ProduceRequestHandler struct {
 	metastore  metastore.Metastore
 	bucketName string
-	s3Client   S3Client
+	s3Client   s3_client.S3Client
 }
 
 func NewProduceRequestHandler(m metastore.Metastore) *ProduceRequestHandler {
-	s3Client := CreateS3Client(DefaultS3Config())
+	s3Client := s3_client.CreateS3Client(s3_client.DefaultS3Config())
 	return NewProduceRequestHandlerWithS3(m, "test-bucket", s3Client)
 }
 
 // NewProduceRequestHandlerWithS3 creates a handler with injectable S3 client for testing
-func NewProduceRequestHandlerWithS3(m metastore.Metastore, bucketName string, s3Client S3Client) *ProduceRequestHandler {
+func NewProduceRequestHandlerWithS3(m metastore.Metastore, bucketName string, s3Client s3_client.S3Client) *ProduceRequestHandler {
 	return &ProduceRequestHandler{
 		metastore:  m,
 		bucketName: bucketName,

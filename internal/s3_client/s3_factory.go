@@ -1,4 +1,4 @@
-package handlers
+package s3_client
 
 import (
 	"context"
