@@ -339,7 +339,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_Basic() {
 	require.NoError(T, err)
 
 	// Verify: Check that RecordBatchV2 records were created
-	recordBatchesV2, err := metastore.GetRecordBatchV2(topicName, 0)
+	recordBatchesV2, err := metastore.GetRecordBatchesV2(topicName, 0)
 	require.NoError(T, err)
 	require.Len(T, recordBatchesV2, 2)
 
@@ -473,7 +473,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionOffs
 	require.NoError(T, err)
 
 	// Verify: Check RecordBatchV2 records for partition 0
-	recordBatchesP0, err := metastore.GetRecordBatchV2(topicName, 0)
+	recordBatchesP0, err := metastore.GetRecordBatchesV2(topicName, 0)
 	require.NoError(T, err)
 
 	// Filter batches by partition 0
@@ -624,7 +624,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionWith
 	require.NoError(T, err)
 
 	// Verify: Check that new RecordBatchV2 records continue from existing offset
-	allBatches, err := metastore.GetRecordBatchV2(topicName, 0)
+	allBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
 	require.NoError(T, err)
 	require.Len(T, allBatches, 3, "Should have 3 total batches")
 
@@ -735,7 +735,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionOrde
 	require.NoError(T, err)
 
 	// Verify: Check that RecordBatchV2 records were created with offsets based on ID order
-	recordBatches, err := metastore.GetRecordBatchV2(topicName, 0)
+	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
 	require.NoError(T, err)
 	require.Len(T, recordBatches, 3, "Should have 3 batches")
 
@@ -885,7 +885,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_BatchLimit() {
 	assert.Equal(T, int64(5), partitions[0].EndOffset, "TopicPartition end_offset should be 5 (only first event processed)")
 
 	// Verify: Check that only 1 RecordBatchV2 was created
-	recordBatches, err := metastore.GetRecordBatchV2(topicName, 0)
+	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
 	require.NoError(T, err)
 	require.Len(T, recordBatches, 1, "Should have exactly 1 RecordBatchV2 due to batch limit")
 

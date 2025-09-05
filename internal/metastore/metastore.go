@@ -18,7 +18,7 @@ type Metastore interface {
 	CommitRecordBatches(batches []BatchCommitInput) ([]BatchCommitOutput, error)
 	CommitRecordBatchEvents(recordBatchEvents []RecordBatchEvent) error
 	MaterializeRecordBatchEvents(nRecords int32) error
-	GetRecordBatchV2(topicName string, startOffset int64) ([]RecordBatchV2, error)
+	GetRecordBatchesV2(topicName string, startOffset int64) ([]RecordBatchV2, error)
 	GetTopicPartitions(topicName string) ([]TopicPartition, error)
 	GetRecordBatchEvents(topicName string) ([]RecordBatchEvent, error)
 }
@@ -329,6 +329,7 @@ func (m *GormMetastore) CommitRecordBatches(batches []BatchCommitInput) ([]Batch
 func (m *GormMetastore) MaterializeRecordBatchEvents(nRecords int32) error {
 	return m.db.Transaction(func(tx *gorm.DB) error {
 		rawSQL := `
+		-- lock the events we are going to materialize
 		with locked_events as (
 
 			select *
@@ -340,6 +341,7 @@ func (m *GormMetastore) MaterializeRecordBatchEvents(nRecords int32) error {
 
 		),
 
+		-- lock each event's corresponding partition
 		locked_partitions as (
 
 			select tp.*
@@ -350,10 +352,12 @@ func (m *GormMetastore) MaterializeRecordBatchEvents(nRecords int32) error {
 				from locked_events e
 
 			)
+			-- acquire locks in deterministic order to prevent deadlocks
 			order by tp.topic_id, tp.partition
 			for update of tp
 		),
 
+		-- compute the offsets for each event
 		offsets as (
 
 			select
@@ -403,7 +407,7 @@ func (m *GormMetastore) MaterializeRecordBatchEvents(nRecords int32) error {
 	})
 }
 
-func (m *GormMetastore) GetRecordBatchV2(topicName string, startOffset int64) ([]RecordBatchV2, error) {
+func (m *GormMetastore) GetRecordBatchesV2(topicName string, startOffset int64) ([]RecordBatchV2, error) {
 	var recordBatches []RecordBatchV2
 
 	rawSQL := `

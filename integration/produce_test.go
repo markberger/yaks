@@ -60,7 +60,7 @@ func (s *IntegrationTestsSuite) TestProduceKgo() {
 	require.NoError(T, err)
 
 	// Confirm there are no messages in the metastore
-	batches, err := agent.Metastore.GetRecordBatches("test-topic")
+	batches, err := agent.Metastore.GetRecordBatchesV2("test-topic", 0)
 	require.NoError(T, err)
 	require.Len(T, batches, 0)
 
@@ -78,30 +78,33 @@ func (s *IntegrationTestsSuite) TestProduceKgo() {
 	if err := cl.ProduceSync(ctx, record).FirstErr(); err != nil {
 		T.Fatalf("record had a produce error while synchronously producing: %v\n", err)
 	}
+	if err := agent.Metastore.MaterializeRecordBatchEvents(1); err != nil {
+		T.Fatalf("failed to materialize record batch events")
+	}
 
 	// Check metastore
-	batches, err = agent.Metastore.GetRecordBatches("test-topic")
+	batches, err = agent.Metastore.GetRecordBatchesV2("test-topic", 0)
 	require.NoError(T, err)
 	require.Len(T, batches, 1)
-	require.Equal(T, "test-topic", batches[0].Topic.Name)
-	require.Equal(T, int64(0), batches[0].Topic.MinOffset)
-	require.Equal(T, int64(0), batches[0].Topic.MaxOffset)
 	require.Equal(T, batches[0].StartOffset, int64(0))
-	require.Equal(T, batches[0].EndOffset, int64(0))
+	require.Equal(T, batches[0].EndOffset, int64(1))
 
 	// Produce another message so that we have two RecordBatches
 	record = &kgo.Record{Topic: "test-topic", Value: []byte("foo")}
 	if err := cl.ProduceSync(ctx, record).FirstErr(); err != nil {
 		T.Fatalf("record had a produce error while synchronously producing: %v\n", err)
 	}
+	if err := agent.Metastore.MaterializeRecordBatchEvents(1); err != nil {
+		T.Fatalf("failed to materialize record batch events")
+	}
 
-	batches, err = agent.Metastore.GetRecordBatches("test-topic")
+	batches, err = agent.Metastore.GetRecordBatchesV2("test-topic", 0)
 	require.NoError(T, err)
 	require.Len(T, batches, 2)
 	require.Equal(T, batches[0].StartOffset, int64(0))
-	require.Equal(T, batches[0].EndOffset, int64(0))
+	require.Equal(T, batches[0].EndOffset, int64(1))
 	require.Equal(T, batches[1].StartOffset, int64(1))
-	require.Equal(T, batches[1].EndOffset, int64(1))
+	require.Equal(T, batches[1].EndOffset, int64(2))
 
 	// Check we can fetch the messages
 	cl.AddConsumePartitions(map[string]map[int32]kgo.Offset{

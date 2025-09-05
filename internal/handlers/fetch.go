@@ -59,21 +59,15 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	// Identify all S3 files to download
 	// TODO: pass fetch offset to GetRecordBatches
 	// TODO: respect byte size cuttoff when returning responses
-	var batchesMetadata []metastore.RecordBatch
+	var batchesMetadata []metastore.RecordBatchV2
 	for _, t := range request.Topics {
 		for _, p := range t.Partitions {
-			recordBatches, err := h.metastore.GetRecordBatches(t.Topic)
+			recordBatches, err := h.metastore.GetRecordBatchesV2(t.Topic, p.FetchOffset)
 			if err != nil {
 				return nil, err
 			}
 
-			for _, b := range recordBatches {
-				if p.FetchOffset > b.EndOffset {
-					continue
-				}
-
-				batchesMetadata = append(batchesMetadata, b)
-			}
+			batchesMetadata = append(batchesMetadata, recordBatches...)
 		}
 
 		// TODO: support multiple topics
