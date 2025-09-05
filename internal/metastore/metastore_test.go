@@ -845,3 +845,686 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_BatchLimit() {
 	assert.Equal(T, int64(5), batch.EndOffset, "Single batch should end at 5")
 	assert.Equal(T, "s3://bucket/topic/batch-1.parquet", batch.S3Key, "Batch should correspond to first event")
 }
+
+// Helper function to find a RecordBatchV2 by S3 key
+func findBatchV2ByS3(batches []RecordBatchV2, s3Key string) *RecordBatchV2 {
+	for i := range batches {
+		if batches[i].S3Key == s3Key {
+			return &batches[i]
+		}
+	}
+	return nil
+}
+
+// Helper function to find a TopicPartition by partition number
+func findPartitionByNumber(partitions []TopicPartition, partitionNum int32) *TopicPartition {
+	for i := range partitions {
+		if partitions[i].Partition == partitionNum {
+			return &partitions[i]
+		}
+	}
+	return nil
+}
+
+func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_EmptyBatch() {
+	metastore := s.TestDB.InitMetastore()
+	T := s.T()
+
+	// Test empty batch input
+	results, err := metastore.CommitRecordBatchesV2([]RecordBatchV2{})
+	require.NoError(T, err, "Empty batch should not error")
+	require.Empty(T, results, "Empty batch should return empty results")
+}
+
+func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_SingleBatchNewPartition() {
+	metastore := s.TestDB.InitMetastore()
+	T := s.T()
+
+	// Setup: Create a TopicV2 with 1 partition
+	topicName := "single-batch-topic"
+	err := metastore.CreateTopicV2(topicName, 1)
+	require.NoError(T, err)
+
+	topic := metastore.GetTopicByName(topicName)
+	require.NotNil(T, topic)
+
+	// Create a single batch for the new partition
+	batches := []RecordBatchV2{
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0,  // Will be calculated by the function
+			EndOffset:   10, // Will be calculated by the function
+			S3Key:       "s3://bucket/topic/partition-0/batch-1.parquet",
+		},
+	}
+
+	// Execute: Commit the batch
+	results, err := metastore.CommitRecordBatchesV2(batches)
+	require.NoError(T, err, "Single batch commit should succeed")
+	require.Len(T, results, 1, "Should return one result")
+
+	// Verify result
+	result := results[0]
+	assert.Equal(T, 0, result.InputIndex, "Input index should be 0")
+	assert.Equal(T, int64(0), result.BaseOffset, "Base offset should be 0 for new partition")
+	assert.Equal(T, batches[0].S3Key, result.S3Key, "S3 key should match")
+	assert.Equal(T, int32(0), result.Partition, "Partition should be 0")
+
+	// Verify the batch was inserted correctly
+	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	require.NoError(T, err)
+	require.Len(T, recordBatches, 1, "Should have one record batch")
+
+	batch := recordBatches[0]
+	assert.Equal(T, topic.ID, batch.TopicID, "Topic ID should match")
+	assert.Equal(T, int32(0), batch.Partition, "Partition should be 0")
+	assert.Equal(T, int64(0), batch.StartOffset, "Start offset should be 0")
+	assert.Equal(T, int64(10), batch.EndOffset, "End offset should be 10")
+	assert.Equal(T, batches[0].S3Key, batch.S3Key, "S3 key should match")
+
+	// Verify partition end_offset was updated
+	partitions, err := metastore.GetTopicPartitions(topicName)
+	require.NoError(T, err)
+	require.Len(T, partitions, 1)
+	assert.Equal(T, int64(10), partitions[0].EndOffset, "Partition end_offset should be updated to 10")
+}
+
+func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_SingleBatchExistingPartition() {
+	metastore := s.TestDB.InitMetastore()
+	T := s.T()
+
+	// Setup: Create a TopicV2 with 1 partition
+	topicName := "existing-partition-topic"
+	err := metastore.CreateTopicV2(topicName, 1)
+	require.NoError(T, err)
+
+	topic := metastore.GetTopicByName(topicName)
+	require.NotNil(T, topic)
+
+	// First, commit an initial batch to establish existing data
+	initialBatches := []RecordBatchV2{
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0,
+			EndOffset:   5,
+			S3Key:       "s3://bucket/topic/partition-0/initial-batch.parquet",
+		},
+	}
+
+	_, err = metastore.CommitRecordBatchesV2(initialBatches)
+	require.NoError(T, err, "Initial batch commit should succeed")
+
+	// Now commit a second batch that should continue from offset 5
+	secondBatches := []RecordBatchV2{
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0, // Will be calculated by the function
+			EndOffset:   8, // Will be calculated by the function (5 + 8 = 13)
+			S3Key:       "s3://bucket/topic/partition-0/second-batch.parquet",
+		},
+	}
+
+	// Execute: Commit the second batch
+	results, err := metastore.CommitRecordBatchesV2(secondBatches)
+	require.NoError(T, err, "Second batch commit should succeed")
+	require.Len(T, results, 1, "Should return one result")
+
+	// Verify result - should start from offset 5 (continuing from first batch)
+	result := results[0]
+	assert.Equal(T, 0, result.InputIndex, "Input index should be 0")
+	assert.Equal(T, int64(5), result.BaseOffset, "Base offset should be 5 (continuing from existing data)")
+	assert.Equal(T, secondBatches[0].S3Key, result.S3Key, "S3 key should match")
+	assert.Equal(T, int32(0), result.Partition, "Partition should be 0")
+
+	// Verify both batches exist
+	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	require.NoError(T, err)
+	require.Len(T, recordBatches, 2, "Should have two record batches")
+
+	// Find the second batch
+	secondBatch := findBatchV2ByS3(recordBatches, secondBatches[0].S3Key)
+	require.NotNil(T, secondBatch, "Second batch should exist")
+	assert.Equal(T, int64(5), secondBatch.StartOffset, "Second batch should start at offset 5")
+	assert.Equal(T, int64(13), secondBatch.EndOffset, "Second batch should end at offset 13")
+
+	// Verify partition end_offset was updated
+	partitions, err := metastore.GetTopicPartitions(topicName)
+	require.NoError(T, err)
+	require.Len(T, partitions, 1)
+	assert.Equal(T, int64(13), partitions[0].EndOffset, "Partition end_offset should be updated to 13")
+}
+
+func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_MultipleBatchesSamePartition() {
+	metastore := s.TestDB.InitMetastore()
+	T := s.T()
+
+	// Setup: Create a TopicV2 with 1 partition
+	topicName := "multi-batch-same-partition"
+	err := metastore.CreateTopicV2(topicName, 1)
+	require.NoError(T, err)
+
+	topic := metastore.GetTopicByName(topicName)
+	require.NotNil(T, topic)
+
+	// Create multiple batches for the same partition
+	batches := []RecordBatchV2{
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   5, // Size: 5
+			S3Key:       "s3://bucket/topic/partition-0/batch-1.parquet",
+		},
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   3, // Size: 3
+			S3Key:       "s3://bucket/topic/partition-0/batch-2.parquet",
+		},
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   7, // Size: 7
+			S3Key:       "s3://bucket/topic/partition-0/batch-3.parquet",
+		},
+	}
+
+	// Execute: Commit all batches
+	results, err := metastore.CommitRecordBatchesV2(batches)
+	require.NoError(T, err, "Multiple batch commit should succeed")
+	require.Len(T, results, 3, "Should return three results")
+
+	// Verify results - offsets should be calculated sequentially
+	assert.Equal(T, 0, results[0].InputIndex)
+	assert.Equal(T, int64(0), results[0].BaseOffset, "First batch should start at 0")
+	assert.Equal(T, batches[0].S3Key, results[0].S3Key)
+
+	assert.Equal(T, 1, results[1].InputIndex)
+	assert.Equal(T, int64(5), results[1].BaseOffset, "Second batch should start at 5")
+	assert.Equal(T, batches[1].S3Key, results[1].S3Key)
+
+	assert.Equal(T, 2, results[2].InputIndex)
+	assert.Equal(T, int64(8), results[2].BaseOffset, "Third batch should start at 8")
+	assert.Equal(T, batches[2].S3Key, results[2].S3Key)
+
+	// Verify all batches were inserted correctly
+	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	require.NoError(T, err)
+	require.Len(T, recordBatches, 3, "Should have three record batches")
+
+	// Find and verify each batch
+	batch1 := findBatchV2ByS3(recordBatches, batches[0].S3Key)
+	batch2 := findBatchV2ByS3(recordBatches, batches[1].S3Key)
+	batch3 := findBatchV2ByS3(recordBatches, batches[2].S3Key)
+
+	require.NotNil(T, batch1, "Batch 1 should exist")
+	require.NotNil(T, batch2, "Batch 2 should exist")
+	require.NotNil(T, batch3, "Batch 3 should exist")
+
+	assert.Equal(T, int64(0), batch1.StartOffset, "Batch 1 should start at 0")
+	assert.Equal(T, int64(5), batch1.EndOffset, "Batch 1 should end at 5")
+
+	assert.Equal(T, int64(5), batch2.StartOffset, "Batch 2 should start at 5")
+	assert.Equal(T, int64(8), batch2.EndOffset, "Batch 2 should end at 8")
+
+	assert.Equal(T, int64(8), batch3.StartOffset, "Batch 3 should start at 8")
+	assert.Equal(T, int64(15), batch3.EndOffset, "Batch 3 should end at 15")
+
+	// Verify partition end_offset was updated to the final value
+	partitions, err := metastore.GetTopicPartitions(topicName)
+	require.NoError(T, err)
+	require.Len(T, partitions, 1)
+	assert.Equal(T, int64(15), partitions[0].EndOffset, "Partition end_offset should be updated to 15")
+}
+
+func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_MultipleBatchesDifferentPartitions() {
+	metastore := s.TestDB.InitMetastore()
+	T := s.T()
+
+	// Setup: Create a TopicV2 with 2 partitions
+	topicName := "multi-partition-topic"
+	err := metastore.CreateTopicV2(topicName, 2)
+	require.NoError(T, err)
+
+	topic := metastore.GetTopicByName(topicName)
+	require.NotNil(T, topic)
+
+	// Create batches for different partitions
+	batches := []RecordBatchV2{
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   5, // Size: 5
+			S3Key:       "s3://bucket/topic/partition-0/batch-1.parquet",
+		},
+		{
+			TopicID:     topic.ID,
+			Partition:   1,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   3, // Size: 3
+			S3Key:       "s3://bucket/topic/partition-1/batch-1.parquet",
+		},
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   4, // Size: 4
+			S3Key:       "s3://bucket/topic/partition-0/batch-2.parquet",
+		},
+	}
+
+	// Execute: Commit all batches
+	results, err := metastore.CommitRecordBatchesV2(batches)
+	require.NoError(T, err, "Multiple partition batch commit should succeed")
+	require.Len(T, results, 3, "Should return three results")
+
+	// Verify results - each partition should have independent offset calculation
+	assert.Equal(T, 0, results[0].InputIndex)
+	assert.Equal(T, int64(0), results[0].BaseOffset, "First batch (partition 0) should start at 0")
+	assert.Equal(T, int32(0), results[0].Partition)
+
+	assert.Equal(T, 1, results[1].InputIndex)
+	assert.Equal(T, int64(0), results[1].BaseOffset, "First batch (partition 1) should start at 0")
+	assert.Equal(T, int32(1), results[1].Partition)
+
+	assert.Equal(T, 2, results[2].InputIndex)
+	assert.Equal(T, int64(5), results[2].BaseOffset, "Second batch (partition 0) should start at 5")
+	assert.Equal(T, int32(0), results[2].Partition)
+
+	// Verify all batches were inserted correctly
+	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	require.NoError(T, err)
+	require.Len(T, recordBatches, 3, "Should have three record batches")
+
+	// Find and verify each batch
+	p0batch1 := findBatchV2ByS3(recordBatches, batches[0].S3Key)
+	p1batch1 := findBatchV2ByS3(recordBatches, batches[1].S3Key)
+	p0batch2 := findBatchV2ByS3(recordBatches, batches[2].S3Key)
+
+	require.NotNil(T, p0batch1, "Partition 0 batch 1 should exist")
+	require.NotNil(T, p1batch1, "Partition 1 batch 1 should exist")
+	require.NotNil(T, p0batch2, "Partition 0 batch 2 should exist")
+
+	// Verify partition 0 batches
+	assert.Equal(T, int64(0), p0batch1.StartOffset, "P0 batch 1 should start at 0")
+	assert.Equal(T, int64(5), p0batch1.EndOffset, "P0 batch 1 should end at 5")
+	assert.Equal(T, int64(5), p0batch2.StartOffset, "P0 batch 2 should start at 5")
+	assert.Equal(T, int64(9), p0batch2.EndOffset, "P0 batch 2 should end at 9")
+
+	// Verify partition 1 batch (independent offset calculation)
+	assert.Equal(T, int64(0), p1batch1.StartOffset, "P1 batch 1 should start at 0")
+	assert.Equal(T, int64(3), p1batch1.EndOffset, "P1 batch 1 should end at 3")
+
+	// Verify both partition end_offsets were updated correctly
+	partitions, err := metastore.GetTopicPartitions(topicName)
+	require.NoError(T, err)
+	require.Len(T, partitions, 2)
+
+	partition0 := findPartitionByNumber(partitions, 0)
+	partition1 := findPartitionByNumber(partitions, 1)
+	require.NotNil(T, partition0, "Partition 0 should exist")
+	require.NotNil(T, partition1, "Partition 1 should exist")
+
+	assert.Equal(T, int64(9), partition0.EndOffset, "Partition 0 end_offset should be 9")
+	assert.Equal(T, int64(3), partition1.EndOffset, "Partition 1 end_offset should be 3")
+}
+
+func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_MultipleBatchesDifferentTopics() {
+	metastore := s.TestDB.InitMetastore()
+	T := s.T()
+
+	// Setup: Create two TopicV2s with 1 partition each
+	topic1Name := "topic-1"
+	topic2Name := "topic-2"
+	err := metastore.CreateTopicV2(topic1Name, 1)
+	require.NoError(T, err)
+	err = metastore.CreateTopicV2(topic2Name, 1)
+	require.NoError(T, err)
+
+	topic1 := metastore.GetTopicByName(topic1Name)
+	topic2 := metastore.GetTopicByName(topic2Name)
+	require.NotNil(T, topic1)
+	require.NotNil(T, topic2)
+
+	// Create batches for different topics
+	batches := []RecordBatchV2{
+		{
+			TopicID:     topic1.ID,
+			Partition:   0,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   5, // Size: 5
+			S3Key:       "s3://bucket/topic1/partition-0/batch-1.parquet",
+		},
+		{
+			TopicID:     topic2.ID,
+			Partition:   0,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   3, // Size: 3
+			S3Key:       "s3://bucket/topic2/partition-0/batch-1.parquet",
+		},
+		{
+			TopicID:     topic1.ID,
+			Partition:   0,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   4, // Size: 4
+			S3Key:       "s3://bucket/topic1/partition-0/batch-2.parquet",
+		},
+	}
+
+	// Execute: Commit all batches
+	results, err := metastore.CommitRecordBatchesV2(batches)
+	require.NoError(T, err, "Multiple topic batch commit should succeed")
+	require.Len(T, results, 3, "Should return three results")
+
+	// Verify results - each topic should have independent offset calculation
+	assert.Equal(T, 0, results[0].InputIndex)
+	assert.Equal(T, int64(0), results[0].BaseOffset, "First batch (topic 1) should start at 0")
+
+	assert.Equal(T, 1, results[1].InputIndex)
+	assert.Equal(T, int64(0), results[1].BaseOffset, "First batch (topic 2) should start at 0")
+
+	assert.Equal(T, 2, results[2].InputIndex)
+	assert.Equal(T, int64(5), results[2].BaseOffset, "Second batch (topic 1) should start at 5")
+
+	// Verify batches for topic 1
+	topic1Batches, err := metastore.GetRecordBatchesV2(topic1Name, 0)
+	require.NoError(T, err)
+	require.Len(T, topic1Batches, 2, "Topic 1 should have two batches")
+
+	// Verify batches for topic 2
+	topic2Batches, err := metastore.GetRecordBatchesV2(topic2Name, 0)
+	require.NoError(T, err)
+	require.Len(T, topic2Batches, 1, "Topic 2 should have one batch")
+
+	// Verify topic 1 partition end_offset
+	topic1Partitions, err := metastore.GetTopicPartitions(topic1Name)
+	require.NoError(T, err)
+	require.Len(T, topic1Partitions, 1)
+	assert.Equal(T, int64(9), topic1Partitions[0].EndOffset, "Topic 1 partition end_offset should be 9")
+
+	// Verify topic 2 partition end_offset
+	topic2Partitions, err := metastore.GetTopicPartitions(topic2Name)
+	require.NoError(T, err)
+	require.Len(T, topic2Partitions, 1)
+	assert.Equal(T, int64(3), topic2Partitions[0].EndOffset, "Topic 2 partition end_offset should be 3")
+}
+
+func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_WindowFunctionOffsetCalculation() {
+	metastore := s.TestDB.InitMetastore()
+	T := s.T()
+
+	// Setup: Create a TopicV2 with 2 partitions
+	topicName := "window-function-v2-topic"
+	err := metastore.CreateTopicV2(topicName, 2)
+	require.NoError(T, err)
+
+	topic := metastore.GetTopicByName(topicName)
+	require.NotNil(T, topic)
+
+	// Create batches that test the window function offset calculation
+	// The SQL uses: sum(inp.n_record) over (partition by inp.topic_id, inp.partition order by inp.input_idx)
+	batches := []RecordBatchV2{
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   5, // Size: 5
+			S3Key:       "s3://bucket/topic/partition-0/batch-1.parquet",
+		},
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   3, // Size: 3
+			S3Key:       "s3://bucket/topic/partition-0/batch-2.parquet",
+		},
+		{
+			TopicID:     topic.ID,
+			Partition:   1,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   4, // Size: 4
+			S3Key:       "s3://bucket/topic/partition-1/batch-1.parquet",
+		},
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   7, // Size: 7
+			S3Key:       "s3://bucket/topic/partition-0/batch-3.parquet",
+		},
+		{
+			TopicID:     topic.ID,
+			Partition:   1,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   2, // Size: 2
+			S3Key:       "s3://bucket/topic/partition-1/batch-2.parquet",
+		},
+	}
+
+	// Execute: Commit all batches
+	results, err := metastore.CommitRecordBatchesV2(batches)
+	require.NoError(T, err, "Window function batch commit should succeed")
+	require.Len(T, results, 5, "Should return five results")
+
+	// Verify results - window function should calculate offsets correctly per partition
+	// Partition 0: batch 1 (input_idx=0), batch 2 (input_idx=1), batch 3 (input_idx=3)
+	// Partition 1: batch 1 (input_idx=2), batch 2 (input_idx=4)
+
+	// Partition 0 batches
+	assert.Equal(T, 0, results[0].InputIndex)
+	assert.Equal(T, int64(0), results[0].BaseOffset, "P0 batch 1 should start at 0")
+	assert.Equal(T, int32(0), results[0].Partition)
+
+	assert.Equal(T, 1, results[1].InputIndex)
+	assert.Equal(T, int64(5), results[1].BaseOffset, "P0 batch 2 should start at 5")
+	assert.Equal(T, int32(0), results[1].Partition)
+
+	assert.Equal(T, 3, results[3].InputIndex)
+	assert.Equal(T, int64(8), results[3].BaseOffset, "P0 batch 3 should start at 8")
+	assert.Equal(T, int32(0), results[3].Partition)
+
+	// Partition 1 batches (independent calculation)
+	assert.Equal(T, 2, results[2].InputIndex)
+	assert.Equal(T, int64(0), results[2].BaseOffset, "P1 batch 1 should start at 0")
+	assert.Equal(T, int32(1), results[2].Partition)
+
+	assert.Equal(T, 4, results[4].InputIndex)
+	assert.Equal(T, int64(4), results[4].BaseOffset, "P1 batch 2 should start at 4")
+	assert.Equal(T, int32(1), results[4].Partition)
+
+	// Verify all batches were inserted with correct offsets
+	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	require.NoError(T, err)
+	require.Len(T, recordBatches, 5, "Should have five record batches")
+
+	// Find batches by S3Key and verify their calculated offsets
+	p0batch1 := findBatchV2ByS3(recordBatches, batches[0].S3Key)
+	p0batch2 := findBatchV2ByS3(recordBatches, batches[1].S3Key)
+	p0batch3 := findBatchV2ByS3(recordBatches, batches[3].S3Key)
+	p1batch1 := findBatchV2ByS3(recordBatches, batches[2].S3Key)
+	p1batch2 := findBatchV2ByS3(recordBatches, batches[4].S3Key)
+
+	require.NotNil(T, p0batch1, "P0 batch 1 should exist")
+	require.NotNil(T, p0batch2, "P0 batch 2 should exist")
+	require.NotNil(T, p0batch3, "P0 batch 3 should exist")
+	require.NotNil(T, p1batch1, "P1 batch 1 should exist")
+	require.NotNil(T, p1batch2, "P1 batch 2 should exist")
+
+	// Verify partition 0 window function calculation: [0,5), [5,8), [8,15)
+	assert.Equal(T, int64(0), p0batch1.StartOffset, "P0 batch 1 should start at 0")
+	assert.Equal(T, int64(5), p0batch1.EndOffset, "P0 batch 1 should end at 5")
+	assert.Equal(T, int64(5), p0batch2.StartOffset, "P0 batch 2 should start at 5")
+	assert.Equal(T, int64(8), p0batch2.EndOffset, "P0 batch 2 should end at 8")
+	assert.Equal(T, int64(8), p0batch3.StartOffset, "P0 batch 3 should start at 8")
+	assert.Equal(T, int64(15), p0batch3.EndOffset, "P0 batch 3 should end at 15")
+
+	// Verify partition 1 window function calculation: [0,4), [4,6)
+	assert.Equal(T, int64(0), p1batch1.StartOffset, "P1 batch 1 should start at 0")
+	assert.Equal(T, int64(4), p1batch1.EndOffset, "P1 batch 1 should end at 4")
+	assert.Equal(T, int64(4), p1batch2.StartOffset, "P1 batch 2 should start at 4")
+	assert.Equal(T, int64(6), p1batch2.EndOffset, "P1 batch 2 should end at 6")
+
+	// Verify partition end_offsets were updated correctly
+	partitions, err := metastore.GetTopicPartitions(topicName)
+	require.NoError(T, err)
+	require.Len(T, partitions, 2)
+
+	partition0 := findPartitionByNumber(partitions, 0)
+	partition1 := findPartitionByNumber(partitions, 1)
+	require.NotNil(T, partition0, "Partition 0 should exist")
+	require.NotNil(T, partition1, "Partition 1 should exist")
+
+	assert.Equal(T, int64(15), partition0.EndOffset, "Partition 0 end_offset should be 15")
+	assert.Equal(T, int64(6), partition1.EndOffset, "Partition 1 end_offset should be 6")
+}
+
+func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_WindowFunctionWithExistingOffsets() {
+	metastore := s.TestDB.InitMetastore()
+	T := s.T()
+
+	// Setup: Create a TopicV2 with 1 partition
+	topicName := "existing-offsets-v2-topic"
+	err := metastore.CreateTopicV2(topicName, 1)
+	require.NoError(T, err)
+
+	topic := metastore.GetTopicByName(topicName)
+	require.NotNil(T, topic)
+
+	// First, commit an initial batch to establish existing data
+	initialBatches := []RecordBatchV2{
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0,
+			EndOffset:   8,
+			S3Key:       "s3://bucket/topic/partition-0/initial-batch.parquet",
+		},
+	}
+
+	_, err = metastore.CommitRecordBatchesV2(initialBatches)
+	require.NoError(T, err, "Initial batch commit should succeed")
+
+	// Now commit new batches that should continue from offset 8
+	newBatches := []RecordBatchV2{
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   5, // Size: 5
+			S3Key:       "s3://bucket/topic/partition-0/new-batch-1.parquet",
+		},
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0, // Will be calculated
+			EndOffset:   3, // Size: 3
+			S3Key:       "s3://bucket/topic/partition-0/new-batch-2.parquet",
+		},
+	}
+
+	// Execute: Commit the new batches
+	results, err := metastore.CommitRecordBatchesV2(newBatches)
+	require.NoError(T, err, "New batch commit should succeed")
+	require.Len(T, results, 2, "Should return two results")
+
+	// Verify results - should continue from existing end_offset (8)
+	assert.Equal(T, 0, results[0].InputIndex)
+	assert.Equal(T, int64(8), results[0].BaseOffset, "First new batch should start at 8")
+
+	assert.Equal(T, 1, results[1].InputIndex)
+	assert.Equal(T, int64(13), results[1].BaseOffset, "Second new batch should start at 13")
+
+	// Verify all batches exist
+	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	require.NoError(T, err)
+	require.Len(T, recordBatches, 3, "Should have three record batches")
+
+	// Find the new batches
+	newBatch1 := findBatchV2ByS3(recordBatches, newBatches[0].S3Key)
+	newBatch2 := findBatchV2ByS3(recordBatches, newBatches[1].S3Key)
+
+	require.NotNil(T, newBatch1, "New batch 1 should exist")
+	require.NotNil(T, newBatch2, "New batch 2 should exist")
+
+	// Verify window function calculation continues from existing offset
+	assert.Equal(T, int64(8), newBatch1.StartOffset, "New batch 1 should start at 8")
+	assert.Equal(T, int64(13), newBatch1.EndOffset, "New batch 1 should end at 13")
+	assert.Equal(T, int64(13), newBatch2.StartOffset, "New batch 2 should start at 13")
+	assert.Equal(T, int64(16), newBatch2.EndOffset, "New batch 2 should end at 16")
+
+	// Verify partition end_offset was updated to final value
+	partitions, err := metastore.GetTopicPartitions(topicName)
+	require.NoError(T, err)
+	require.Len(T, partitions, 1)
+	assert.Equal(T, int64(16), partitions[0].EndOffset, "Partition end_offset should be updated to 16")
+}
+
+func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_GetSizeMethod() {
+	metastore := s.TestDB.InitMetastore()
+	T := s.T()
+
+	// Setup: Create a TopicV2 with 1 partition
+	topicName := "get-size-method-topic"
+	err := metastore.CreateTopicV2(topicName, 1)
+	require.NoError(T, err)
+
+	topic := metastore.GetTopicByName(topicName)
+	require.NotNil(T, topic)
+
+	// Create batches with different start/end offsets to test GetSize() method
+	batches := []RecordBatchV2{
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0,
+			EndOffset:   10, // Size: 10
+			S3Key:       "s3://bucket/topic/partition-0/batch-1.parquet",
+		},
+		{
+			TopicID:     topic.ID,
+			Partition:   0,
+			StartOffset: 0,
+			EndOffset:   5, // Size: 5
+			S3Key:       "s3://bucket/topic/partition-0/batch-2.parquet",
+		},
+	}
+
+	// Test GetSize() method before committing
+	assert.Equal(T, int64(10), batches[0].GetSize(), "Batch 1 size should be 10")
+	assert.Equal(T, int64(5), batches[1].GetSize(), "Batch 2 size should be 5")
+
+	// Execute: Commit the batches
+	results, err := metastore.CommitRecordBatchesV2(batches)
+	require.NoError(T, err, "Batch commit should succeed")
+	require.Len(T, results, 2, "Should return two results")
+
+	// Verify that the function used GetSize() correctly for offset calculation
+	assert.Equal(T, int64(0), results[0].BaseOffset, "First batch should start at 0")
+	assert.Equal(T, int64(10), results[1].BaseOffset, "Second batch should start at 10 (0 + 10)")
+
+	// Verify the committed batches have correct offsets
+	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	require.NoError(T, err)
+	require.Len(T, recordBatches, 2, "Should have two record batches")
+
+	batch1 := findBatchV2ByS3(recordBatches, batches[0].S3Key)
+	batch2 := findBatchV2ByS3(recordBatches, batches[1].S3Key)
+
+	require.NotNil(T, batch1, "Batch 1 should exist")
+	require.NotNil(T, batch2, "Batch 2 should exist")
+
+	assert.Equal(T, int64(0), batch1.StartOffset, "Batch 1 should start at 0")
+	assert.Equal(T, int64(10), batch1.EndOffset, "Batch 1 should end at 10")
+	assert.Equal(T, int64(10), batch2.StartOffset, "Batch 2 should start at 10")
+	assert.Equal(T, int64(15), batch2.EndOffset, "Batch 2 should end at 15")
+
+	// Test GetSize() method on committed batches
+	assert.Equal(T, int64(10), batch1.GetSize(), "Committed batch 1 size should be 10")
+	assert.Equal(T, int64(5), batch2.GetSize(), "Committed batch 2 size should be 5")
+}

@@ -46,6 +46,14 @@ type BatchCommitOutput struct {
 	S3Key      string `gorm:"column:s3_key"`      // Change expected column name to s3_key
 }
 
+// Output structure containing the result for a single committed batch in V2 system
+type BatchCommitOutputV2 struct {
+	InputIndex int    `gorm:"column:input_idx"`
+	BaseOffset int64  `gorm:"column:base_offset"`
+	S3Key      string `gorm:"column:s3_key"`
+	Partition  int32  `gorm:"column:partition"`
+}
+
 //
 // V2 Models
 //

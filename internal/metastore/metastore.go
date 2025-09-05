@@ -17,6 +17,7 @@ type Metastore interface {
 	CommitRecordBatches(batches []BatchCommitInput) ([]BatchCommitOutput, error)
 	CommitRecordBatchEvents(recordBatchEvents []RecordBatchEvent) error
 	MaterializeRecordBatchEvents(nRecords int32) error
+	CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchCommitOutputV2, error)
 	GetRecordBatchesV2(topicName string, startOffset int64) ([]RecordBatchV2, error)
 	GetTopicPartitions(topicName string) ([]TopicPartition, error)
 	GetRecordBatchEvents(topicName string) ([]RecordBatchEvent, error)
@@ -259,6 +260,114 @@ func (m *GormMetastore) CommitRecordBatches(batches []BatchCommitInput) ([]Batch
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to commit record batches: %w", err)
+	}
+
+	return results, nil
+}
+
+func (m *GormMetastore) CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchCommitOutputV2, error) {
+	if len(batches) == 0 {
+		return []BatchCommitOutputV2{}, nil
+	}
+
+	// Extract data into parallel slices
+	topicIDs := make([]string, len(batches))
+	partitions := make([]int32, len(batches))
+	nRecords := make([]int64, len(batches))
+	s3Keys := make([]string, len(batches))
+	for i, batch := range batches {
+		topicIDs[i] = batch.TopicID.String()
+		partitions[i] = batch.Partition
+		nRecords[i] = batch.GetSize()
+		s3Keys[i] = batch.S3Key
+	}
+
+	var results []BatchCommitOutputV2
+	err := m.db.Transaction(func(tx *gorm.DB) error {
+		rawSQL := `
+		-- Create input data from the provided arrays
+		with input_data as (
+			select
+				idx - 1 as input_idx, -- 0-based index matching original slice
+				topic_id::uuid,
+				partition,
+				n_record,
+				s3_key
+			from unnest($1::text[], $2::integer[], $3::bigint[], $4::text[])
+				with ordinality as t(topic_id, partition, n_record, s3_key, idx)
+		),
+
+		-- lock each partition that we're going to update
+		locked_partitions as (
+			select tp.*
+			from topic_partitions tp
+			where (tp.topic_id, tp.partition) in (
+				select distinct topic_id, partition
+				from input_data
+			)
+			-- acquire locks in deterministic order to prevent deadlocks
+			order by tp.topic_id, tp.partition
+			for update of tp
+		),
+
+		-- compute the offsets for each batch
+		offsets as (
+			select
+				inp.input_idx,
+				inp.topic_id,
+				inp.partition,
+				inp.n_record,
+				tp.end_offset + sum(inp.n_record) over (partition by inp.topic_id, inp.partition order by inp.input_idx) - inp.n_record as start_offset,
+				tp.end_offset + sum(inp.n_record) over (partition by inp.topic_id, inp.partition order by inp.input_idx) as end_offset,
+				inp.s3_key
+			from input_data inp
+			join locked_partitions tp
+				on tp.topic_id = inp.topic_id
+				and tp.partition = inp.partition
+		),
+
+		insert_batches as (
+			insert into record_batch_v2(topic_id, partition, start_offset, end_offset, s3_key)
+			select topic_id, partition, start_offset, end_offset, s3_key
+			from offsets
+			returning topic_id, partition, start_offset, s3_key
+		),
+
+		update_partitions as (
+			update topic_partitions tp
+			set end_offset = sub.max_end_offset
+			from (
+				select topic_id, partition, max(end_offset) as max_end_offset
+				from offsets
+				group by topic_id, partition
+			) sub
+			where tp.topic_id = sub.topic_id
+				and tp.partition = sub.partition
+			returning tp.topic_id
+		)
+
+		-- Return the results for each input batch
+		select
+			o.input_idx as input_idx,
+			o.start_offset as base_offset,
+			o.s3_key as s3_key,
+			o.partition as partition
+		from offsets o
+		order by o.input_idx;
+		`
+
+		err := tx.Raw(rawSQL,
+			pq.Array(topicIDs),
+			pq.Array(partitions),
+			pq.Array(nRecords),
+			pq.Array(s3Keys),
+		).Scan(&results).Error
+
+		return err
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to commit record batches v2: %w", err)
 	}
 
 	return results, nil
