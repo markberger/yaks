@@ -1,4 +1,4 @@
-package metastore
+package metastore_bench
 
 import (
 	"fmt"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markberger/yaks/internal/metastore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -97,17 +98,17 @@ type BenchmarkMetrics struct {
 }
 
 // setupBenchmarkData creates test data for benchmarking
-func setupBenchmarkData(metastore *GormMetastore, config BenchmarkConfig) ([]TopicV2, []RecordBatchEvent, error) {
+func setupBenchmarkData(ms *metastore.GormMetastore, config BenchmarkConfig) ([]metastore.TopicV2, []metastore.RecordBatchEvent, error) {
 	// Create topics and partitions
-	var topics []TopicV2
+	var topics []metastore.TopicV2
 	for i := 0; i < config.NumTopics; i++ {
 		topicName := fmt.Sprintf("bench-topic-%d", i)
-		err := metastore.CreateTopicV2(topicName, config.PartitionsPerTopic)
+		err := ms.CreateTopicV2(topicName, config.PartitionsPerTopic)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to create topic %s: %w", topicName, err)
 		}
 
-		topic := metastore.GetTopicByName(topicName)
+		topic := ms.GetTopicByName(topicName)
 		if topic == nil {
 			return nil, nil, fmt.Errorf("failed to retrieve created topic %s", topicName)
 		}
@@ -116,14 +117,14 @@ func setupBenchmarkData(metastore *GormMetastore, config BenchmarkConfig) ([]Top
 
 	// Create existing data if requested
 	if config.WithExistingData {
-		err := createExistingBatchData(metastore, topics)
+		err := createExistingBatchData(ms, topics)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to create existing data: %w", err)
 		}
 	}
 
 	// Create unprocessed record batch events
-	events := make([]RecordBatchEvent, 0, config.NumEvents)
+	events := make([]metastore.RecordBatchEvent, 0, config.NumEvents)
 
 	// Use deterministic random seed for reproducible benchmarks
 	rng := rand.New(rand.NewSource(42))
@@ -137,8 +138,8 @@ func setupBenchmarkData(metastore *GormMetastore, config BenchmarkConfig) ([]Top
 		recordRange := config.MaxRecordsPerEvent - config.MinRecordsPerEvent + 1
 		nRecords := config.MinRecordsPerEvent + int64(rng.Intn(int(recordRange)))
 
-		event := RecordBatchEvent{
-			BaseModel: BaseModel{
+		event := metastore.RecordBatchEvent{
+			BaseModel: metastore.BaseModel{
 				ID:        uuid.New(),
 				CreatedAt: time.Now().Add(time.Duration(i) * time.Millisecond), // Ensure ordering
 			},
@@ -152,7 +153,7 @@ func setupBenchmarkData(metastore *GormMetastore, config BenchmarkConfig) ([]Top
 	}
 
 	// Commit events in batches to handle large numbers of events efficiently
-	commitBatchSize := 1000 // Commit in batches of 5000 events
+	commitBatchSize := 1000 // Commit in batches of 1000 events
 	for i := 0; i < len(events); i += commitBatchSize {
 		end := i + commitBatchSize
 		if end > len(events) {
@@ -160,7 +161,7 @@ func setupBenchmarkData(metastore *GormMetastore, config BenchmarkConfig) ([]Top
 		}
 
 		batch := events[i:end]
-		err := metastore.CommitRecordBatchEvents(batch)
+		err := ms.CommitRecordBatchEvents(batch)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to commit record batch events (batch %d-%d): %w", i, end-1, err)
 		}
@@ -170,13 +171,13 @@ func setupBenchmarkData(metastore *GormMetastore, config BenchmarkConfig) ([]Top
 }
 
 // createExistingBatchData creates some existing RecordBatchV2 data to simulate real-world scenarios
-func createExistingBatchData(metastore *GormMetastore, topics []TopicV2) error {
+func createExistingBatchData(ms *metastore.GormMetastore, topics []metastore.TopicV2) error {
 	for _, topic := range topics {
 		// Create some existing events and materialize them
-		existingEvents := make([]RecordBatchEvent, 0, 10)
+		existingEvents := make([]metastore.RecordBatchEvent, 0, 10)
 		for p := int32(0); p < 2; p++ { // Create data for first 2 partitions
 			for i := 0; i < 5; i++ {
-				event := RecordBatchEvent{
+				event := metastore.RecordBatchEvent{
 					TopicID:   topic.ID,
 					Partition: p,
 					NRecords:  int64(100 + i*50),
@@ -188,12 +189,12 @@ func createExistingBatchData(metastore *GormMetastore, topics []TopicV2) error {
 		}
 
 		// Commit and materialize existing events
-		err := metastore.CommitRecordBatchEvents(existingEvents)
+		err := ms.CommitRecordBatchEvents(existingEvents)
 		if err != nil {
 			return err
 		}
 
-		err = metastore.MaterializeRecordBatchEvents(int32(len(existingEvents)))
+		err = ms.MaterializeRecordBatchEvents(int32(len(existingEvents)))
 		if err != nil {
 			return err
 		}
@@ -204,7 +205,7 @@ func createExistingBatchData(metastore *GormMetastore, topics []TopicV2) error {
 // runBenchmarkScenario executes a benchmark scenario and collects metrics
 func runBenchmarkScenario(b *testing.B, config BenchmarkConfig) {
 	// Setup test database once for all iterations
-	testDB := NewTestDB()
+	testDB := metastore.NewTestDB()
 	defer testDB.Close()
 
 	b.ResetTimer()
@@ -214,17 +215,17 @@ func runBenchmarkScenario(b *testing.B, config BenchmarkConfig) {
 		b.StopTimer()
 
 		// Create fresh metastore for each iteration
-		metastore := testDB.InitMetastore()
+		ms := testDB.InitMetastore()
 
 		// Setup benchmark data
-		topics, events, err := setupBenchmarkData(metastore, config)
+		topics, events, err := setupBenchmarkData(ms, config)
 		require.NoError(b, err)
 
 		b.StartTimer()
 
 		// Execute the function being benchmarked with concurrent indexers
 		start := time.Now()
-		err = runConcurrentIndexers(metastore, config)
+		err = runConcurrentIndexers(ms, config)
 		executionTime := time.Since(start)
 
 		b.StopTimer()
@@ -233,12 +234,12 @@ func runBenchmarkScenario(b *testing.B, config BenchmarkConfig) {
 
 		// Collect metrics for reporting
 		if i == 0 { // Report metrics only for first iteration to avoid noise
-			metrics := collectBenchmarkMetrics(metastore, topics, events, executionTime)
+			metrics := collectBenchmarkMetrics(ms, topics, events, executionTime)
 			reportBenchmarkMetrics(b, config, metrics)
 		}
 
 		// Close the database connection to prevent connection leaks
-		sqlDB, _ := metastore.db.DB()
+		sqlDB, _ := ms.GetDB().DB()
 		if sqlDB != nil {
 			sqlDB.Close()
 		}
@@ -246,17 +247,17 @@ func runBenchmarkScenario(b *testing.B, config BenchmarkConfig) {
 }
 
 // runConcurrentIndexers runs multiple indexers concurrently
-func runConcurrentIndexers(metastore *GormMetastore, config BenchmarkConfig) error {
+func runConcurrentIndexers(ms *metastore.GormMetastore, config BenchmarkConfig) error {
 	if config.NumIndexers <= 1 {
 		// Single indexer case - process all events
 		for {
-			err := metastore.MaterializeRecordBatchEvents(config.BatchSize)
+			err := ms.MaterializeRecordBatchEvents(config.BatchSize)
 			if err != nil {
 				return err
 			}
 
 			// Check if there are more unprocessed events
-			hasMore, checkErr := hasUnprocessedEvents(metastore)
+			hasMore, checkErr := hasUnprocessedEvents(ms)
 			if checkErr != nil {
 				return checkErr
 			}
@@ -281,14 +282,14 @@ func runConcurrentIndexers(metastore *GormMetastore, config BenchmarkConfig) err
 			for {
 				// The MaterializeRecordBatchEvents function uses FOR UPDATE SKIP LOCKED
 				// so multiple indexers can safely run concurrently
-				err := metastore.MaterializeRecordBatchEvents(config.BatchSize)
+				err := ms.MaterializeRecordBatchEvents(config.BatchSize)
 				if err != nil {
 					errChan <- fmt.Errorf("indexer %d failed: %w", indexerID, err)
 					return
 				}
 
 				// Check if there are more unprocessed events
-				hasMore, checkErr := hasUnprocessedEvents(metastore)
+				hasMore, checkErr := hasUnprocessedEvents(ms)
 				if checkErr != nil {
 					errChan <- fmt.Errorf("indexer %d failed to check for more events: %w", indexerID, checkErr)
 					return
@@ -315,9 +316,9 @@ func runConcurrentIndexers(metastore *GormMetastore, config BenchmarkConfig) err
 }
 
 // hasUnprocessedEvents checks if there are any unprocessed events remaining
-func hasUnprocessedEvents(metastore *GormMetastore) (bool, error) {
+func hasUnprocessedEvents(ms *metastore.GormMetastore) (bool, error) {
 	var count int64
-	err := metastore.db.Model(&RecordBatchEvent{}).Where("processed = false").Count(&count).Error
+	err := ms.GetDB().Model(&metastore.RecordBatchEvent{}).Where("processed = false").Count(&count).Error
 	if err != nil {
 		return false, err
 	}
@@ -325,14 +326,14 @@ func hasUnprocessedEvents(metastore *GormMetastore) (bool, error) {
 }
 
 // collectBenchmarkMetrics gathers performance metrics after benchmark execution
-func collectBenchmarkMetrics(metastore *GormMetastore, topics []TopicV2, originalEvents []RecordBatchEvent, executionTime time.Duration) BenchmarkMetrics {
+func collectBenchmarkMetrics(ms *metastore.GormMetastore, topics []metastore.TopicV2, originalEvents []metastore.RecordBatchEvent, executionTime time.Duration) BenchmarkMetrics {
 	metrics := BenchmarkMetrics{
 		ExecutionTimeMs: executionTime.Milliseconds(),
 	}
 
 	// Count processed events
 	for _, topic := range topics {
-		events, _ := metastore.GetRecordBatchEvents(topic.Name)
+		events, _ := ms.GetRecordBatchEvents(topic.Name)
 		for _, event := range events {
 			if event.Processed {
 				metrics.EventsProcessed++
@@ -340,11 +341,11 @@ func collectBenchmarkMetrics(metastore *GormMetastore, topics []TopicV2, origina
 		}
 
 		// Count created record batches
-		batches, _ := metastore.GetRecordBatchV2(topic.Name, 0)
+		batches, _ := ms.GetRecordBatchV2(topic.Name, 0)
 		metrics.RecordBatchesCreated += int64(len(batches))
 
 		// Count updated partitions
-		partitions, _ := metastore.GetTopicPartitions(topic.Name)
+		partitions, _ := ms.GetTopicPartitions(topic.Name)
 		for _, partition := range partitions {
 			if partition.EndOffset > 0 {
 				metrics.PartitionsProcessed++

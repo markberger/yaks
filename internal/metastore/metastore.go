@@ -32,6 +32,11 @@ func NewGormMetastore(db *gorm.DB) *GormMetastore {
 	return &GormMetastore{db}
 }
 
+// GetDB returns the underlying gorm.DB instance
+func (m *GormMetastore) GetDB() *gorm.DB {
+	return m.db
+}
+
 func (m *GormMetastore) ApplyMigrations() error {
 	err := m.db.AutoMigrate(
 		&Topic{},
