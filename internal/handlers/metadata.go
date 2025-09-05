@@ -33,7 +33,7 @@ func (h *MetadataRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	response.ControllerID = 0
 	response.Topics = []kmsg.MetadataResponseTopic{}
 
-	existingTopics, err := h.metastore.GetTopics()
+	existingTopics, err := h.metastore.GetTopicsV2()
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +44,7 @@ func (h *MetadataRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 				h.metastore.CreateTopic(*t.Topic, 1)
 			}
 		}
-		existingTopics, err = h.metastore.GetTopics()
+		existingTopics, err = h.metastore.GetTopicsV2()
 		if err != nil {
 			return nil, err
 		}
@@ -70,7 +70,7 @@ func (h *MetadataRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	return &response, nil
 }
 
-func topicExists(t kmsg.MetadataRequestTopic, existingTopics []metastore.Topic) bool {
+func topicExists(t kmsg.MetadataRequestTopic, existingTopics []metastore.TopicV2) bool {
 	for _, existingTopic := range existingTopics {
 		if *t.Topic == existingTopic.Name {
 			return true

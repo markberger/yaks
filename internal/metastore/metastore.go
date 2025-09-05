@@ -12,6 +12,7 @@ type Metastore interface {
 	CreateTopic(name string, nPartitions int32) error
 	CreateTopicV2(name string, nPartitions int32) error
 	GetTopics() ([]Topic, error)
+	GetTopicsV2() ([]TopicV2, error)
 	GetTopicByName(name string) *TopicV2
 	CommitRecordBatchEvents(recordBatchEvents []RecordBatchEvent) error
 	MaterializeRecordBatchEvents(nRecords int32) error

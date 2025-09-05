@@ -8,7 +8,7 @@ import (
 
 func (s *HandlersTestSuite) TestMetadataRequestHandler() {
 	metastore := s.TestDB.InitMetastore()
-	metastore.CreateTopic("test-topic", 1)
+	metastore.CreateTopicV2("test-topic", 1)
 	broker := broker.NewBroker(1, "localhost", 9092)
 	handler := NewMetadataRequestHandler(broker, metastore)
 

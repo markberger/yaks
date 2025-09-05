@@ -28,7 +28,7 @@ func (s *HandlersTestSuite) TestCreateTopicsHandlerSuccess() {
 	require.Equal(s.T(), response.Topics[0].ErrorCode, int16(0))
 
 	// And the new topic should be in the metastore
-	topics, err := metastore.GetTopics()
+	topics, err := metastore.GetTopicsV2()
 	require.NoError(s.T(), err)
 	require.Len(s.T(), topics, 1)
 	require.Equal(s.T(), topics[0].Name, "test-topic")
