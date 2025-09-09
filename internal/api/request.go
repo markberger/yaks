@@ -32,11 +32,14 @@ func (r *RequestHeader) ReadFrom(b *kbin.Reader) error {
 		r.clientID = *s
 	}
 
-	headerVersion, err := HeaderVersionForRequest(r.key, r.version)
-	if err != nil {
-		return err
+	// Determine whether request is "flexible" i.e. supports _tagged_fields
+	// https://kafka.apache.org/protocol#protocol_messages
+	request := kmsg.RequestForKey(r.key)
+	if request == nil {
+		return fmt.Errorf("api key has no associated request: %d", r.key)
 	}
-	if headerVersion >= 2 {
+	request.SetVersion(r.version)
+	if request.IsFlexible() {
 		r.tags = internalReadTags(b)
 	}
 	return nil
@@ -50,41 +53,4 @@ func internalReadTags(b *kbin.Reader) kmsg.Tags {
 		t.Set(key, b.Span(int(size)))
 	}
 	return t
-}
-
-func HeaderVersionForRequest(key int16, requestVersion int16) (int16, error) {
-	switch key {
-	case int16(kmsg.Produce):
-		if requestVersion >= 9 {
-			return 2, nil
-		} else {
-			return 1, nil
-		}
-	case int16(kmsg.ApiVersions):
-		if requestVersion >= 3 {
-			return 2, nil
-		} else {
-			return 1, nil
-		}
-	case int16(kmsg.Metadata):
-		if requestVersion >= 9 {
-			return 2, nil
-		} else {
-			return 1, nil
-		}
-	case int16(kmsg.CreateTopics):
-		if requestVersion >= 5 {
-			return 2, nil
-		} else {
-			return 1, nil
-		}
-	case int16(kmsg.Fetch):
-		if requestVersion >= 12 {
-			return 2, nil
-		} else {
-			return 1, nil
-		}
-	default:
-		return 0, fmt.Errorf("unknown header version for key: %v", kmsg.NameForKey(key))
-	}
 }
