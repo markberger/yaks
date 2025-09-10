@@ -11,7 +11,6 @@ import (
 	"github.com/markberger/yaks/internal/api"
 	log "github.com/sirupsen/logrus"
 	"github.com/twmb/franz-go/pkg/kbin"
-	"github.com/twmb/franz-go/pkg/kmsg"
 )
 
 type Broker struct {
@@ -104,8 +103,8 @@ func (b *Broker) handleConn(ctx context.Context, conn net.Conn) {
 
 		// Parse the bytes into api.RequestHeader
 		reader := kbin.Reader{Src: body}
-		header := &api.RequestHeader{}
-		err = header.ReadFrom(&reader)
+		request := &api.ClientRequest{}
+		err = request.ReadFrom(&reader)
 		if err != nil {
 			log.Error("failed to parse request header: ", err)
 			return
@@ -113,29 +112,21 @@ func (b *Broker) handleConn(ctx context.Context, conn net.Conn) {
 		log.WithFields(
 			log.Fields{
 				"client":        conn.RemoteAddr(),
-				"clientID":      header.ClientID(),
-				"key":           header.KeyName(),
-				"version":       header.Version(),
-				"correlationID": header.CorrelationID(),
+				"clientID":      request.ClientID(),
+				"key":           request.KeyName(),
+				"version":       request.Version(),
+				"correlationID": request.CorrelationID(),
 			},
 		).Info("Received request")
 
-		// Parse the remaining bytes into the respective kmsg.Request struct
-		request := kmsg.RequestForKey(header.Key())
-		request.SetVersion(header.Version())
-		if err := request.ReadFrom(reader.Src); err != nil {
-			log.Error("failed to parse request: ", err, "\nrequest: ", request)
-			return
-		}
-
 		// Run the appropriate Handler to generate a kmsg.Response
-		handler := b.handlerRegistry.Get(request)
+		handler := b.handlerRegistry.Get(request.Body())
 		if handler == nil {
 			log.Error("failed to find appropriate handler")
 			return
 		}
 
-		response, err := handler.Handle(request)
+		response, err := handler.Handle(request.Body())
 		if err != nil {
 			log.Errorf("handler returned an error: %v", err)
 			return
@@ -144,7 +135,7 @@ func (b *Broker) handleConn(ctx context.Context, conn net.Conn) {
 		// Serialize the response and send it to the client
 		// TODO: check return value of conn.Write
 		dst := make([]byte, 0)
-		dst = AppendResponse(dst, response, header.CorrelationID())
+		dst = AppendResponse(dst, response, request.CorrelationID())
 		_, err = conn.Write(dst)
 		if err != nil {
 			log.Errorf("Error encountered when writing response: %v", err)
@@ -153,9 +144,9 @@ func (b *Broker) handleConn(ctx context.Context, conn net.Conn) {
 		log.WithFields(
 			log.Fields{
 				"client":        conn.RemoteAddr(),
-				"key":           header.KeyName(),
-				"version":       header.Version(),
-				"correlationID": header.CorrelationID(),
+				"key":           request.KeyName(),
+				"version":       request.Version(),
+				"correlationID": request.CorrelationID(),
 			},
 		).Info("Response sent")
 	}

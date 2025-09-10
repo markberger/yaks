@@ -7,23 +7,26 @@ import (
 	"github.com/twmb/franz-go/pkg/kmsg"
 )
 
-// Represents the metadata attached to every API request:
-// https://kafka.apache.org/protocol#protocol_messages
-type RequestHeader struct {
+// Represents a single request sent by the client. This is mostly
+// a wrapper struct around kmsg.Request since franz-go does not have
+// a reason to include this representation.
+type ClientRequest struct {
 	key           int16
 	version       int16
 	correlationID int32
 	clientID      string
 	tags          kmsg.Tags
+	request       kmsg.Request
 }
 
-func (r *RequestHeader) Key() int16           { return r.key }
-func (r *RequestHeader) KeyName() string      { return kmsg.NameForKey(r.key) }
-func (r *RequestHeader) Version() int16       { return r.version }
-func (r *RequestHeader) CorrelationID() int32 { return r.correlationID }
-func (r *RequestHeader) ClientID() string     { return r.clientID }
+func (r *ClientRequest) Key() int16           { return r.key }
+func (r *ClientRequest) KeyName() string      { return kmsg.NameForKey(r.key) }
+func (r *ClientRequest) Version() int16       { return r.version }
+func (r *ClientRequest) CorrelationID() int32 { return r.correlationID }
+func (r *ClientRequest) ClientID() string     { return r.clientID }
+func (r *ClientRequest) Body() kmsg.Request   { return r.request }
 
-func (r *RequestHeader) ReadFrom(b *kbin.Reader) error {
+func (r *ClientRequest) ReadFrom(b *kbin.Reader) error {
 	r.key = b.Int16()
 	r.version = b.Int16()
 	r.correlationID = b.Int32()
@@ -40,17 +43,12 @@ func (r *RequestHeader) ReadFrom(b *kbin.Reader) error {
 	}
 	request.SetVersion(r.version)
 	if request.IsFlexible() {
-		r.tags = internalReadTags(b)
+		r.tags = kmsg.ReadTags(b)
 	}
-	return nil
-}
 
-func internalReadTags(b *kbin.Reader) kmsg.Tags {
-	var t kmsg.Tags
-	n := b.Uvarint()
-	for num := n; num > 0; num-- {
-		key, size := b.Uvarint(), b.Uvarint()
-		t.Set(key, b.Span(int(size)))
+	if err := request.ReadFrom(b.Src); err != nil {
+		return fmt.Errorf("failed to parse request: %v", err)
 	}
-	return t
+	r.request = request
+	return nil
 }
