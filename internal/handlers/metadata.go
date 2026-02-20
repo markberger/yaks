@@ -50,6 +50,24 @@ func (h *MetadataRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 		}
 	}
 
+	// Filter topics based on request. nil means "all topics",
+	// non-nil means only return the requested topics.
+	if request.Topics != nil {
+		requested := make(map[string]bool, len(request.Topics))
+		for _, t := range request.Topics {
+			if t.Topic != nil {
+				requested[*t.Topic] = true
+			}
+		}
+		filtered := make([]metastore.TopicV2, 0, len(requested))
+		for _, t := range existingTopics {
+			if requested[t.Name] {
+				filtered = append(filtered, t)
+			}
+		}
+		existingTopics = filtered
+	}
+
 	for _, t := range existingTopics {
 		topic := kmsg.MetadataResponseTopic{
 			Topic:      &t.Name,
