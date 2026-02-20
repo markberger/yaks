@@ -19,6 +19,6 @@ func (s *MetastoreTestSuite) TearDownSuite() {
 	s.TestDB.Close()
 }
 
-func TestHandlersTestSuite(t *testing.T) {
+func TestMetastoreTestSuite(t *testing.T) {
 	suite.Run(t, new(MetastoreTestSuite))
 }

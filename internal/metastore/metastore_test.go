@@ -638,6 +638,84 @@ func findPartitionByNumber(partitions []TopicPartition, partitionNum int32) *Top
 	return nil
 }
 
+func (s *MetastoreTestSuite) TestGetRecordBatchesV2_OffsetZeroReturnsAll() {
+	metastore := s.TestDB.InitMetastore()
+	T := s.T()
+
+	topicName := "get-batches-all"
+	err := metastore.CreateTopicV2(topicName, 1)
+	require.NoError(T, err)
+
+	topic := metastore.GetTopicByName(topicName)
+	require.NotNil(T, topic)
+
+	// Seed 3 batches: [0,5), [5,8), [8,15)
+	_, err = metastore.CommitRecordBatchesV2([]RecordBatchV2{
+		{TopicID: topic.ID, Partition: 0, NRecords: 5, S3Key: "batch-1"},
+		{TopicID: topic.ID, Partition: 0, NRecords: 3, S3Key: "batch-2"},
+		{TopicID: topic.ID, Partition: 0, NRecords: 7, S3Key: "batch-3"},
+	})
+	require.NoError(T, err)
+
+	batches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	require.NoError(T, err)
+	require.Len(T, batches, 3)
+	assert.Equal(T, int64(0), batches[0].StartOffset)
+	assert.Equal(T, int64(5), batches[1].StartOffset)
+	assert.Equal(T, int64(8), batches[2].StartOffset)
+}
+
+func (s *MetastoreTestSuite) TestGetRecordBatchesV2_OffsetMidBatch() {
+	metastore := s.TestDB.InitMetastore()
+	T := s.T()
+
+	topicName := "get-batches-mid"
+	err := metastore.CreateTopicV2(topicName, 1)
+	require.NoError(T, err)
+
+	topic := metastore.GetTopicByName(topicName)
+	require.NotNil(T, topic)
+
+	// Seed 3 batches: [0,5), [5,8), [8,15)
+	_, err = metastore.CommitRecordBatchesV2([]RecordBatchV2{
+		{TopicID: topic.ID, Partition: 0, NRecords: 5, S3Key: "batch-1"},
+		{TopicID: topic.ID, Partition: 0, NRecords: 3, S3Key: "batch-2"},
+		{TopicID: topic.ID, Partition: 0, NRecords: 7, S3Key: "batch-3"},
+	})
+	require.NoError(T, err)
+
+	// Offset 3 falls inside batch [0,5) — that batch must be included
+	batches, err := metastore.GetRecordBatchesV2(topicName, 3)
+	require.NoError(T, err)
+	require.Len(T, batches, 3)
+	assert.Equal(T, int64(0), batches[0].StartOffset)
+	assert.Equal(T, int64(5), batches[1].StartOffset)
+	assert.Equal(T, int64(8), batches[2].StartOffset)
+}
+
+func (s *MetastoreTestSuite) TestGetRecordBatchesV2_OffsetPastAllBatches() {
+	metastore := s.TestDB.InitMetastore()
+	T := s.T()
+
+	topicName := "get-batches-past"
+	err := metastore.CreateTopicV2(topicName, 1)
+	require.NoError(T, err)
+
+	topic := metastore.GetTopicByName(topicName)
+	require.NotNil(T, topic)
+
+	// Seed 2 batches: [0,5), [5,8)
+	_, err = metastore.CommitRecordBatchesV2([]RecordBatchV2{
+		{TopicID: topic.ID, Partition: 0, NRecords: 5, S3Key: "batch-1"},
+		{TopicID: topic.ID, Partition: 0, NRecords: 3, S3Key: "batch-2"},
+	})
+	require.NoError(T, err)
+
+	batches, err := metastore.GetRecordBatchesV2(topicName, 100)
+	require.NoError(T, err)
+	assert.Empty(T, batches)
+}
+
 func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_EmptyBatch() {
 	metastore := s.TestDB.InitMetastore()
 	T := s.T()

@@ -299,9 +299,12 @@ func (m *GormMetastore) GetRecordBatchesV2(topicName string, startOffset int64) 
 		from record_batch_v2 rb
 		join topic_v2 t
 			on rb.topic_id = t.id
-		where t.name = ?
+		where 1=1
+			and t.name = ?
+			and rb.start_offset + rb.n_records >= ?
+		order by rb.start_offset asc
 	`
-	result := m.db.Raw(rawSQL, topicName).Scan(&recordBatches)
+	result := m.db.Raw(rawSQL, topicName, startOffset).Scan(&recordBatches)
 	if result.Error != nil {
 		return nil, result.Error
 	}
