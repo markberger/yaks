@@ -66,3 +66,32 @@ func TestAppendResponse_SuccessFlexible(t *testing.T) {
 		t.Errorf("\nExpected\t%v\ngot\t\t%v", expectedOutput, dst)
 	}
 }
+
+func TestAppendResponse_FlexibleNonApiVersions(t *testing.T) {
+	correlationID := int32(42)
+
+	// FindCoordinatorResponse v3 is flexible and not ApiVersions,
+	// so AppendResponse must insert a 0x00 tagged fields byte after the correlation ID.
+	response := &kmsg.FindCoordinatorResponse{
+		Version:        3,
+		ThrottleMillis: 0,
+		ErrorCode:      0,
+		NodeID:         0,
+		Host:           "localhost",
+		Port:           9092,
+	}
+
+	dst := AppendResponse([]byte{}, response, correlationID)
+
+	// Byte layout:
+	// [0..3]  size (4 bytes)
+	// [4..7]  correlationID (4 bytes)
+	// [8]     tagged fields = 0x00 (flexible header v1)
+	// [9..]   response body
+	if len(dst) < 9 {
+		t.Fatalf("response too short: %d bytes", len(dst))
+	}
+	if dst[8] != 0x00 {
+		t.Errorf("expected tagged fields byte 0x00 at position 8, got 0x%02x", dst[8])
+	}
+}
