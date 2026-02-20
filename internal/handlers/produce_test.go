@@ -8,26 +8,12 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/markberger/yaks/internal/buffer"
+	"github.com/markberger/yaks/internal/s3_client"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kmsg"
 )
-
-// MockS3Client implements S3Client interface for testing
-type MockS3Client struct {
-	mock.Mock
-}
-
-func (m *MockS3Client) PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
-	args := m.Called(ctx, params)
-	return args.Get(0).(*s3.PutObjectOutput), args.Error(1)
-}
-
-func (m *MockS3Client) GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
-	args := m.Called(ctx, params)
-	return args.Get(0).(*s3.GetObjectOutput), args.Error(1)
-}
 
 // Test helper functions
 func createValidProduceRequest(topicName string, partition int32, records []byte) *kmsg.ProduceRequest {
@@ -120,7 +106,7 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_Success() {
 	err := metastore.CreateTopicV2("test-topic-success", 1)
 	require.NoError(s.T(), err)
 
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("PutObject", mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
 
 	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", 50*time.Millisecond, 1<<30)
@@ -160,7 +146,7 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_Success() {
 func (s *HandlersTestSuite) TestProduceRequestHandler_TransactionRejection() {
 	// Setup
 	metastore := s.TestDB.InitMetastore()
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", time.Hour, 1<<30)
 	handler := NewProduceRequestHandler(metastore, buf)
 
@@ -180,7 +166,7 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_TransactionRejection() {
 func (s *HandlersTestSuite) TestProduceRequestHandler_InvalidTopic() {
 	// Setup
 	metastore := s.TestDB.InitMetastore()
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", time.Hour, 1<<30)
 	handler := NewProduceRequestHandler(metastore, buf)
 
@@ -206,7 +192,7 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_InvalidPartition() {
 	err := metastore.CreateTopicV2("test-topic", 1) // Only partition 0 exists
 	require.NoError(s.T(), err)
 
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", time.Hour, 1<<30)
 	handler := NewProduceRequestHandler(metastore, buf)
 
@@ -232,7 +218,7 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_CorruptMessage() {
 	err := metastore.CreateTopicV2("test-topic", 1)
 	require.NoError(s.T(), err)
 
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", time.Hour, 1<<30)
 	handler := NewProduceRequestHandler(metastore, buf)
 
@@ -258,7 +244,7 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_S3Failure() {
 	err := metastore.CreateTopicV2("test-topic-s3-fail", 1)
 	require.NoError(s.T(), err)
 
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("PutObject", mock.Anything, mock.Anything).Return((*s3.PutObjectOutput)(nil), errors.New("S3 upload failed"))
 
 	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", 50*time.Millisecond, 1<<30)
@@ -288,7 +274,7 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_ResponseMapping() {
 	err := metastore.CreateTopicV2("test-topic-mapping", 2) // Create topic with 2 partitions
 	require.NoError(s.T(), err)
 
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("PutObject", mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
 
 	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", 50*time.Millisecond, 1<<30)
@@ -336,7 +322,7 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_ResponseMapping() {
 func (s *HandlersTestSuite) TestProduceRequestHandler_HandlerInterface() {
 	// Setup
 	metastore := s.TestDB.InitMetastore()
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", time.Hour, 1<<30)
 	handler := NewProduceRequestHandler(metastore, buf)
 

@@ -11,25 +11,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"github.com/markberger/yaks/internal/metastore"
+	"github.com/markberger/yaks/internal/s3_client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
-
-// MockS3Client implements s3_client.S3Client
-type MockS3Client struct {
-	mock.Mock
-}
-
-func (m *MockS3Client) PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
-	args := m.Called(ctx, params)
-	return args.Get(0).(*s3.PutObjectOutput), args.Error(1)
-}
-
-func (m *MockS3Client) GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
-	args := m.Called(ctx, params)
-	return args.Get(0).(*s3.GetObjectOutput), args.Error(1)
-}
 
 // MockMetastore implements metastore.Metastore
 type MockMetastore struct {
@@ -86,7 +72,7 @@ func (m *MockMetastore) GetRecordBatchEvents(topicName string) ([]metastore.Reco
 }
 
 func TestBasicFlush(t *testing.T) {
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockMeta := &MockMetastore{}
 	topicID := uuid.New()
 
@@ -129,7 +115,7 @@ func TestBasicFlush(t *testing.T) {
 }
 
 func TestMultiPartitionPacking(t *testing.T) {
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockMeta := &MockMetastore{}
 	topicID := uuid.New()
 
@@ -172,7 +158,7 @@ func TestMultiPartitionPacking(t *testing.T) {
 }
 
 func TestSamePartitionBatching(t *testing.T) {
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockMeta := &MockMetastore{}
 	topicID := uuid.New()
 
@@ -208,7 +194,7 @@ func TestSamePartitionBatching(t *testing.T) {
 }
 
 func TestFlushCycleIsolation(t *testing.T) {
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockMeta := &MockMetastore{}
 	topicID := uuid.New()
 
@@ -235,7 +221,7 @@ func TestFlushCycleIsolation(t *testing.T) {
 }
 
 func TestS3FailurePropagation(t *testing.T) {
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockMeta := &MockMetastore{}
 	topicID := uuid.New()
 
@@ -256,7 +242,7 @@ func TestS3FailurePropagation(t *testing.T) {
 }
 
 func TestDBFailurePropagation(t *testing.T) {
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockMeta := &MockMetastore{}
 	topicID := uuid.New()
 
@@ -275,7 +261,7 @@ func TestDBFailurePropagation(t *testing.T) {
 }
 
 func TestSizeThresholdTriggersFlush(t *testing.T) {
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockMeta := &MockMetastore{}
 	topicID := uuid.New()
 
@@ -303,7 +289,7 @@ func TestSizeThresholdTriggersFlush(t *testing.T) {
 }
 
 func TestTimerFlush(t *testing.T) {
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockMeta := &MockMetastore{}
 	topicID := uuid.New()
 
@@ -330,7 +316,7 @@ func TestTimerFlush(t *testing.T) {
 }
 
 func TestConcurrentSubmits(t *testing.T) {
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockMeta := &MockMetastore{}
 	topicID := uuid.New()
 
@@ -362,7 +348,7 @@ func TestConcurrentSubmits(t *testing.T) {
 }
 
 func TestEmptyFlush(t *testing.T) {
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockMeta := &MockMetastore{}
 
 	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30)
@@ -376,7 +362,7 @@ func TestEmptyFlush(t *testing.T) {
 }
 
 func TestGracefulShutdown(t *testing.T) {
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockMeta := &MockMetastore{}
 	topicID := uuid.New()
 

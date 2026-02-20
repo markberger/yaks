@@ -8,6 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/markberger/yaks/internal/metastore"
+	"github.com/markberger/yaks/internal/s3_client"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kmsg"
@@ -58,7 +59,7 @@ func (s *HandlersTestSuite) TestFetch_Success_PatchesFirstOffset() {
 	// metadata about how many Kafka records the batch contains — it doesn't
 	// determine the byte length of the S3 object.
 	batchBytes := fakeBatchData(61)
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(batchBytes), nil)
 
 	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket")
@@ -88,7 +89,7 @@ func (s *HandlersTestSuite) TestFetch_OffsetPastAllBatches_EmptyResponse() {
 	ms := s.TestDB.InitMetastore()
 	seedBatch(ms, "fetch-empty", 0, 5, "batches/002.batch")
 
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	// No GetObject calls expected
 
 	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket")
@@ -116,7 +117,7 @@ func (s *HandlersTestSuite) TestFetch_MultipleBatches_Concatenated() {
 
 	dataA := fakeBatchData(16)
 	dataB := fakeBatchData(32)
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
 		return *in.Key == "batch/a.batch"
 	})).Return(mockGetObjectReturn(dataA), nil)
@@ -146,7 +147,7 @@ func (s *HandlersTestSuite) TestFetch_S3Failure_ReturnsError() {
 	ms := s.TestDB.InitMetastore()
 	seedBatch(ms, "fetch-s3fail", 0, 5, "batches/fail.batch")
 
-	mockS3 := &MockS3Client{}
+	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(
 		(*s3.GetObjectOutput)(nil), errors.New("connection refused"),
 	)
