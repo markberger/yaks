@@ -341,7 +341,7 @@ func collectBenchmarkMetrics(ms *metastore.GormMetastore, topics []metastore.Top
 		}
 
 		// Count created record batches
-		batches, _ := ms.GetRecordBatchesV2(topic.Name, 0)
+		batches, _ := ms.GetRecordBatchesV2(topic.Name, 0, 0)
 		metrics.RecordBatchesCreated += int64(len(batches))
 
 		// Count updated partitions
@@ -835,7 +835,7 @@ func collectCommitBenchmarkMetrics(ms *metastore.GormMetastore, topics []metasto
 
 	// Count created record batches and total records
 	for _, topic := range topics {
-		batches, _ := ms.GetRecordBatchesV2(topic.Name, 0)
+		batches, _ := ms.GetRecordBatchesV2(topic.Name, 0, 0)
 		metrics.TotalBatches += int64(len(batches))
 
 		for _, batch := range batches {

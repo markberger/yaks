@@ -61,7 +61,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_Basic() {
 	require.NoError(T, err)
 
 	// Verify: Check that RecordBatchV2 records were created
-	recordBatchesV2, err := metastore.GetRecordBatchesV2(topicName, 0)
+	recordBatchesV2, err := metastore.GetRecordBatchesV2(topicName, 0, 0)
 	require.NoError(T, err)
 	require.Len(T, recordBatchesV2, 2)
 
@@ -161,7 +161,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_ByteFieldsPropagat
 	require.NoError(T, err)
 
 	// Verify byte fields are carried through to RecordBatchV2
-	batches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	batches, err := metastore.GetRecordBatchesV2(topicName, 0, 0)
 	require.NoError(T, err)
 	require.Len(T, batches, 2)
 
@@ -260,26 +260,9 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionOffs
 	require.NoError(T, err)
 
 	// Verify: Check RecordBatchV2 records for partition 0
-	recordBatchesP0, err := metastore.GetRecordBatchesV2(topicName, 0)
+	partition0Batches, err := metastore.GetRecordBatchesV2(topicName, 0, 0)
 	require.NoError(T, err)
-
-	// Filter batches by partition 0
-	var partition0Batches []RecordBatchV2
-	for _, batch := range recordBatchesP0 {
-		if batch.Partition == 0 {
-			partition0Batches = append(partition0Batches, batch)
-		}
-	}
 	require.Len(T, partition0Batches, 3, "Should have 3 batches for partition 0")
-
-	// Sort by start offset to verify ordering
-	for i := 0; i < len(partition0Batches)-1; i++ {
-		for j := i + 1; j < len(partition0Batches); j++ {
-			if partition0Batches[i].StartOffset > partition0Batches[j].StartOffset {
-				partition0Batches[i], partition0Batches[j] = partition0Batches[j], partition0Batches[i]
-			}
-		}
-	}
 
 	// Verify window function calculation for partition 0
 	// Expected: [0,5), [5,8), [8,15)
@@ -293,23 +276,9 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionOffs
 	assert.Equal(T, int64(15), partition0Batches[2].StartOffset+partition0Batches[2].NRecords, "Third batch should end at 15")
 
 	// Verify: Check RecordBatchV2 records for partition 1
-	// Filter batches by partition 1
-	var partition1Batches []RecordBatchV2
-	for _, batch := range recordBatchesP0 {
-		if batch.Partition == 1 {
-			partition1Batches = append(partition1Batches, batch)
-		}
-	}
+	partition1Batches, err := metastore.GetRecordBatchesV2(topicName, 1, 0)
+	require.NoError(T, err)
 	require.Len(T, partition1Batches, 2, "Should have 2 batches for partition 1")
-
-	// Sort by start offset
-	for i := 0; i < len(partition1Batches)-1; i++ {
-		for j := i + 1; j < len(partition1Batches); j++ {
-			if partition1Batches[i].StartOffset > partition1Batches[j].StartOffset {
-				partition1Batches[i], partition1Batches[j] = partition1Batches[j], partition1Batches[i]
-			}
-		}
-	}
 
 	// Verify window function calculation for partition 1 (independent of partition 0)
 	// Expected: [0,4), [4,6)
@@ -411,7 +380,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionWith
 	require.NoError(T, err)
 
 	// Verify: Check that new RecordBatchV2 records continue from existing offset
-	allBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	allBatches, err := metastore.GetRecordBatchesV2(topicName, 0, 0)
 	require.NoError(T, err)
 	require.Len(T, allBatches, 3, "Should have 3 total batches")
 
@@ -522,7 +491,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionOrde
 	require.NoError(T, err)
 
 	// Verify: Check that RecordBatchV2 records were created with offsets based on ID order
-	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0, 0)
 	require.NoError(T, err)
 	require.Len(T, recordBatches, 3, "Should have 3 batches")
 
@@ -672,7 +641,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_BatchLimit() {
 	assert.Equal(T, int64(5), partitions[0].EndOffset, "TopicPartition end_offset should be 5 (only first event processed)")
 
 	// Verify: Check that only 1 RecordBatchV2 was created
-	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0, 0)
 	require.NoError(T, err)
 	require.Len(T, recordBatches, 1, "Should have exactly 1 RecordBatchV2 due to batch limit")
 
@@ -722,7 +691,7 @@ func (s *MetastoreTestSuite) TestGetRecordBatchesV2_OffsetZeroReturnsAll() {
 	})
 	require.NoError(T, err)
 
-	batches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	batches, err := metastore.GetRecordBatchesV2(topicName, 0, 0)
 	require.NoError(T, err)
 	require.Len(T, batches, 3)
 	assert.Equal(T, int64(0), batches[0].StartOffset)
@@ -750,7 +719,7 @@ func (s *MetastoreTestSuite) TestGetRecordBatchesV2_OffsetMidBatch() {
 	require.NoError(T, err)
 
 	// Offset 3 falls inside batch [0,5) — that batch must be included
-	batches, err := metastore.GetRecordBatchesV2(topicName, 3)
+	batches, err := metastore.GetRecordBatchesV2(topicName, 0, 3)
 	require.NoError(T, err)
 	require.Len(T, batches, 3)
 	assert.Equal(T, int64(0), batches[0].StartOffset)
@@ -776,7 +745,7 @@ func (s *MetastoreTestSuite) TestGetRecordBatchesV2_OffsetPastAllBatches() {
 	})
 	require.NoError(T, err)
 
-	batches, err := metastore.GetRecordBatchesV2(topicName, 100)
+	batches, err := metastore.GetRecordBatchesV2(topicName, 0, 100)
 	require.NoError(T, err)
 	assert.Empty(T, batches)
 }
@@ -826,7 +795,7 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_SingleBatchNewPartition()
 	assert.Equal(T, int32(0), result.Partition, "Partition should be 0")
 
 	// Verify the batch was inserted correctly
-	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0, 0)
 	require.NoError(T, err)
 	require.Len(T, recordBatches, 1, "Should have one record batch")
 
@@ -892,7 +861,7 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_SingleBatchExistingPartit
 	assert.Equal(T, int32(0), result.Partition, "Partition should be 0")
 
 	// Verify both batches exist
-	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0, 0)
 	require.NoError(T, err)
 	require.Len(T, recordBatches, 2, "Should have two record batches")
 
@@ -962,7 +931,7 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_MultipleBatchesSamePartit
 	assert.Equal(T, batches[2].S3Key, results[2].S3Key)
 
 	// Verify all batches were inserted correctly
-	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0, 0)
 	require.NoError(T, err)
 	require.Len(T, recordBatches, 3, "Should have three record batches")
 
@@ -1043,27 +1012,28 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_MultipleBatchesDifferentP
 	assert.Equal(T, int64(5), results[2].BaseOffset, "Second batch (partition 0) should start at 5")
 	assert.Equal(T, int32(0), results[2].Partition)
 
-	// Verify all batches were inserted correctly
-	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	// Verify partition 0 batches
+	p0Batches, err := metastore.GetRecordBatchesV2(topicName, 0, 0)
 	require.NoError(T, err)
-	require.Len(T, recordBatches, 3, "Should have three record batches")
+	require.Len(T, p0Batches, 2, "Should have two record batches for partition 0")
 
-	// Find and verify each batch
-	p0batch1 := findBatchV2ByS3(recordBatches, batches[0].S3Key)
-	p1batch1 := findBatchV2ByS3(recordBatches, batches[1].S3Key)
-	p0batch2 := findBatchV2ByS3(recordBatches, batches[2].S3Key)
+	p0batch1 := findBatchV2ByS3(p0Batches, batches[0].S3Key)
+	p0batch2 := findBatchV2ByS3(p0Batches, batches[2].S3Key)
 
 	require.NotNil(T, p0batch1, "Partition 0 batch 1 should exist")
-	require.NotNil(T, p1batch1, "Partition 1 batch 1 should exist")
 	require.NotNil(T, p0batch2, "Partition 0 batch 2 should exist")
 
-	// Verify partition 0 batches
 	assert.Equal(T, int64(0), p0batch1.StartOffset, "P0 batch 1 should start at 0")
 	assert.Equal(T, int64(5), p0batch1.StartOffset+p0batch1.NRecords, "P0 batch 1 should end at 5")
 	assert.Equal(T, int64(5), p0batch2.StartOffset, "P0 batch 2 should start at 5")
 	assert.Equal(T, int64(9), p0batch2.StartOffset+p0batch2.NRecords, "P0 batch 2 should end at 9")
 
 	// Verify partition 1 batch (independent offset calculation)
+	p1Batches, err := metastore.GetRecordBatchesV2(topicName, 1, 0)
+	require.NoError(T, err)
+	require.Len(T, p1Batches, 1, "Should have one record batch for partition 1")
+
+	p1batch1 := p1Batches[0]
 	assert.Equal(T, int64(0), p1batch1.StartOffset, "P1 batch 1 should start at 0")
 	assert.Equal(T, int64(3), p1batch1.StartOffset+p1batch1.NRecords, "P1 batch 1 should end at 3")
 
@@ -1136,12 +1106,12 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_MultipleBatchesDifferentT
 	assert.Equal(T, int64(5), results[2].BaseOffset, "Second batch (topic 1) should start at 5")
 
 	// Verify batches for topic 1
-	topic1Batches, err := metastore.GetRecordBatchesV2(topic1Name, 0)
+	topic1Batches, err := metastore.GetRecordBatchesV2(topic1Name, 0, 0)
 	require.NoError(T, err)
 	require.Len(T, topic1Batches, 2, "Topic 1 should have two batches")
 
 	// Verify batches for topic 2
-	topic2Batches, err := metastore.GetRecordBatchesV2(topic2Name, 0)
+	topic2Batches, err := metastore.GetRecordBatchesV2(topic2Name, 0, 0)
 	require.NoError(T, err)
 	require.Len(T, topic2Batches, 1, "Topic 2 should have one batch")
 
@@ -1236,23 +1206,18 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_WindowFunctionOffsetCalcu
 	assert.Equal(T, int64(4), results[4].BaseOffset, "P1 batch 2 should start at 4")
 	assert.Equal(T, int32(1), results[4].Partition)
 
-	// Verify all batches were inserted with correct offsets
-	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	// Verify partition 0 batches
+	p0Batches, err := metastore.GetRecordBatchesV2(topicName, 0, 0)
 	require.NoError(T, err)
-	require.Len(T, recordBatches, 5, "Should have five record batches")
+	require.Len(T, p0Batches, 3, "Should have three record batches for partition 0")
 
-	// Find batches by S3Key and verify their calculated offsets
-	p0batch1 := findBatchV2ByS3(recordBatches, batches[0].S3Key)
-	p0batch2 := findBatchV2ByS3(recordBatches, batches[1].S3Key)
-	p0batch3 := findBatchV2ByS3(recordBatches, batches[3].S3Key)
-	p1batch1 := findBatchV2ByS3(recordBatches, batches[2].S3Key)
-	p1batch2 := findBatchV2ByS3(recordBatches, batches[4].S3Key)
+	p0batch1 := findBatchV2ByS3(p0Batches, batches[0].S3Key)
+	p0batch2 := findBatchV2ByS3(p0Batches, batches[1].S3Key)
+	p0batch3 := findBatchV2ByS3(p0Batches, batches[3].S3Key)
 
 	require.NotNil(T, p0batch1, "P0 batch 1 should exist")
 	require.NotNil(T, p0batch2, "P0 batch 2 should exist")
 	require.NotNil(T, p0batch3, "P0 batch 3 should exist")
-	require.NotNil(T, p1batch1, "P1 batch 1 should exist")
-	require.NotNil(T, p1batch2, "P1 batch 2 should exist")
 
 	// Verify partition 0 window function calculation: [0,5), [5,8), [8,15)
 	assert.Equal(T, int64(0), p0batch1.StartOffset, "P0 batch 1 should start at 0")
@@ -1261,6 +1226,17 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_WindowFunctionOffsetCalcu
 	assert.Equal(T, int64(8), p0batch2.StartOffset+p0batch2.NRecords, "P0 batch 2 should end at 8")
 	assert.Equal(T, int64(8), p0batch3.StartOffset, "P0 batch 3 should start at 8")
 	assert.Equal(T, int64(15), p0batch3.StartOffset+p0batch3.NRecords, "P0 batch 3 should end at 15")
+
+	// Verify partition 1 batches
+	p1Batches, err := metastore.GetRecordBatchesV2(topicName, 1, 0)
+	require.NoError(T, err)
+	require.Len(T, p1Batches, 2, "Should have two record batches for partition 1")
+
+	p1batch1 := findBatchV2ByS3(p1Batches, batches[2].S3Key)
+	p1batch2 := findBatchV2ByS3(p1Batches, batches[4].S3Key)
+
+	require.NotNil(T, p1batch1, "P1 batch 1 should exist")
+	require.NotNil(T, p1batch2, "P1 batch 2 should exist")
 
 	// Verify partition 1 window function calculation: [0,4), [4,6)
 	assert.Equal(T, int64(0), p1batch1.StartOffset, "P1 batch 1 should start at 0")
@@ -1336,7 +1312,7 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_WindowFunctionWithExistin
 	assert.Equal(T, int64(13), results[1].BaseOffset, "Second new batch should start at 13")
 
 	// Verify all batches exist
-	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	recordBatches, err := metastore.GetRecordBatchesV2(topicName, 0, 0)
 	require.NoError(T, err)
 	require.Len(T, recordBatches, 3, "Should have three record batches")
 

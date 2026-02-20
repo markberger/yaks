@@ -32,48 +32,44 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	response.SetVersion(request.GetVersion())
 	response.ThrottleMillis = 0
 
-	// Identify all S3 files to download
-	// TODO: respect byte size cuttoff when returning responses
-	var batchesMetadata []metastore.RecordBatchV2
+	// TODO: respect byte size cutoff when returning responses
 	for _, t := range request.Topics {
+		responseTopic := kmsg.NewFetchResponseTopic()
+		responseTopic.Topic = t.Topic
+
 		for _, p := range t.Partitions {
-			recordBatches, err := h.metastore.GetRecordBatchesV2(t.Topic, p.FetchOffset)
+			batchesMetadata, err := h.metastore.GetRecordBatchesV2(t.Topic, p.Partition, p.FetchOffset)
 			if err != nil {
 				return nil, err
 			}
 
-			batchesMetadata = append(batchesMetadata, recordBatches...)
+			responsePartition := kmsg.NewFetchResponseTopicPartition()
+			responsePartition.Partition = p.Partition
+			responsePartition.ErrorCode = 0
+
+			var recordBatches []byte
+			for _, metadata := range batchesMetadata {
+				data, err := h.downloadBatch(metadata.S3Key, metadata.ByteOffset, metadata.ByteLength)
+				if err != nil {
+					return nil, fmt.Errorf("failed to fetch batch %s: %w", metadata.S3Key, err)
+				}
+
+				// Set RecordBatch.FirstOffset for consumer
+				binary.BigEndian.PutUint64(data, uint64(metadata.StartOffset))
+				recordBatches = append(recordBatches, data...)
+			}
+			responsePartition.RecordBatches = recordBatches
+			responseTopic.Partitions = append(responseTopic.Partitions, responsePartition)
 		}
 
+		response.Topics = append(response.Topics, responseTopic)
 		// TODO: support multiple topics
 		break
 	}
-
-	// TODO: support multiple topics
-	responseTopic := kmsg.NewFetchResponseTopic()
-	responseTopic.Topic = request.Topics[0].Topic
-	responsePartition := kmsg.NewFetchResponseTopicPartition()
-	responsePartition.Partition = 0
-	responsePartition.ErrorCode = 0
-
-	var recordBatches []byte
-	for _, metadata := range batchesMetadata {
-		data, err := h.downloadBatch(metadata.S3Key)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch batch %s: %w", metadata.S3Key, err)
-		}
-
-		// Set RecordBatch.FirstOffset for consumer
-		binary.BigEndian.PutUint64(data, uint64(metadata.StartOffset))
-		recordBatches = append(recordBatches, data...)
-	}
-	responsePartition.RecordBatches = recordBatches
-	responseTopic.Partitions = append(responseTopic.Partitions, responsePartition)
-	response.Topics = append(response.Topics, responseTopic)
 	return &response, nil
 }
 
-func (h *FetchRequestHandler) downloadBatch(key string) ([]byte, error) {
+func (h *FetchRequestHandler) downloadBatch(key string, byteOffset, byteLength int64) ([]byte, error) {
 	resp, err := h.s3Client.GetObject(context.Background(), &s3.GetObjectInput{
 		Bucket: &h.bucketName,
 		Key:    &key,
@@ -87,5 +83,5 @@ func (h *FetchRequestHandler) downloadBatch(key string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read object body: %w", err)
 	}
-	return data, nil
+	return data[byteOffset : byteOffset+byteLength], nil
 }

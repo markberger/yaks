@@ -60,7 +60,7 @@ func (s *IntegrationTestsSuite) TestProduceKgo() {
 	require.NoError(T, err)
 
 	// Confirm there are no messages in the metastore
-	batches, err := agent.Metastore.GetRecordBatchesV2("test-topic", 0)
+	batches, err := agent.Metastore.GetRecordBatchesV2("test-topic", 0, 0)
 	require.NoError(T, err)
 	require.Len(T, batches, 0)
 
@@ -85,7 +85,7 @@ func (s *IntegrationTestsSuite) TestProduceKgo() {
 	}
 
 	// Check metastore
-	batches, err = agent.Metastore.GetRecordBatchesV2("test-topic", 0)
+	batches, err = agent.Metastore.GetRecordBatchesV2("test-topic", 0, 0)
 	require.NoError(T, err)
 	require.Len(T, batches, 1)
 	require.Equal(T, batches[0].StartOffset, int64(0))
@@ -100,7 +100,7 @@ func (s *IntegrationTestsSuite) TestProduceKgo() {
 		T.Fatalf("failed to materialize record batch events")
 	}
 
-	batches, err = agent.Metastore.GetRecordBatchesV2("test-topic", 0)
+	batches, err = agent.Metastore.GetRecordBatchesV2("test-topic", 0, 0)
 	require.NoError(T, err)
 	require.Len(T, batches, 2)
 	require.Equal(T, batches[0].StartOffset, int64(0))

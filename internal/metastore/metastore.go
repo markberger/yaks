@@ -15,7 +15,7 @@ type Metastore interface {
 	CommitRecordBatchEvents(recordBatchEvents []RecordBatchEvent) error
 	MaterializeRecordBatchEvents(nRecords int32) error
 	CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchCommitOutputV2, error)
-	GetRecordBatchesV2(topicName string, startOffset int64) ([]RecordBatchV2, error)
+	GetRecordBatchesV2(topicName string, partition int32, startOffset int64) ([]RecordBatchV2, error)
 	GetTopicPartitions(topicName string) ([]TopicPartition, error)
 	GetRecordBatchEvents(topicName string) ([]RecordBatchEvent, error)
 }
@@ -112,11 +112,15 @@ func (m *GormMetastore) CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchC
 	partitions := make([]int32, len(batches))
 	nRecords := make([]int64, len(batches))
 	s3Keys := make([]string, len(batches))
+	byteOffsets := make([]int64, len(batches))
+	byteLengths := make([]int64, len(batches))
 	for i, batch := range batches {
 		topicIDs[i] = batch.TopicID.String()
 		partitions[i] = batch.Partition
 		nRecords[i] = batch.NRecords
 		s3Keys[i] = batch.S3Key
+		byteOffsets[i] = batch.ByteOffset
+		byteLengths[i] = batch.ByteLength
 	}
 
 	var results []BatchCommitOutputV2
@@ -129,9 +133,11 @@ func (m *GormMetastore) CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchC
 				topic_id::uuid,
 				partition,
 				n_record,
-				s3_key
-			from unnest($1::text[], $2::integer[], $3::bigint[], $4::text[])
-				with ordinality as t(topic_id, partition, n_record, s3_key, idx)
+				s3_key,
+				byte_offset,
+				byte_length
+			from unnest($1::text[], $2::integer[], $3::bigint[], $4::text[], $5::bigint[], $6::bigint[])
+				with ordinality as t(topic_id, partition, n_record, s3_key, byte_offset, byte_length, idx)
 		),
 
 		-- lock each partition that we're going to update
@@ -156,7 +162,9 @@ func (m *GormMetastore) CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchC
 				inp.n_record,
 				tp.end_offset + sum(inp.n_record) over (partition by inp.topic_id, inp.partition order by inp.input_idx) - inp.n_record as start_offset,
 				tp.end_offset + sum(inp.n_record) over (partition by inp.topic_id, inp.partition order by inp.input_idx) as end_offset,
-				inp.s3_key
+				inp.s3_key,
+				inp.byte_offset,
+				inp.byte_length
 			from input_data inp
 			join locked_partitions tp
 				on tp.topic_id = inp.topic_id
@@ -164,8 +172,8 @@ func (m *GormMetastore) CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchC
 		),
 
 		insert_batches as (
-			insert into record_batch_v2(topic_id, partition, start_offset, n_records, s3_key)
-			select topic_id, partition, start_offset, n_record, s3_key
+			insert into record_batch_v2(topic_id, partition, start_offset, n_records, s3_key, byte_offset, byte_length)
+			select topic_id, partition, start_offset, n_record, s3_key, byte_offset, byte_length
 			from offsets
 			returning topic_id, partition, start_offset, s3_key
 		),
@@ -198,6 +206,8 @@ func (m *GormMetastore) CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchC
 			pq.Array(partitions),
 			pq.Array(nRecords),
 			pq.Array(s3Keys),
+			pq.Array(byteOffsets),
+			pq.Array(byteLengths),
 		).Scan(&results).Error
 
 		return err
@@ -293,7 +303,7 @@ func (m *GormMetastore) MaterializeRecordBatchEvents(nRecords int32) error {
 	})
 }
 
-func (m *GormMetastore) GetRecordBatchesV2(topicName string, startOffset int64) ([]RecordBatchV2, error) {
+func (m *GormMetastore) GetRecordBatchesV2(topicName string, partition int32, startOffset int64) ([]RecordBatchV2, error) {
 	var recordBatches []RecordBatchV2
 
 	rawSQL := `
@@ -303,10 +313,11 @@ func (m *GormMetastore) GetRecordBatchesV2(topicName string, startOffset int64) 
 			on rb.topic_id = t.id
 		where 1=1
 			and t.name = ?
+			and rb.partition = ?
 			and rb.start_offset + rb.n_records >= ?
 		order by rb.start_offset asc
 	`
-	result := m.db.Raw(rawSQL, topicName, startOffset).Scan(&recordBatches)
+	result := m.db.Raw(rawSQL, topicName, partition, startOffset).Scan(&recordBatches)
 	if result.Error != nil {
 		return nil, result.Error
 	}

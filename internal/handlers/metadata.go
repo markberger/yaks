@@ -54,16 +54,16 @@ func (h *MetadataRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 		topic := kmsg.MetadataResponseTopic{
 			Topic:      &t.Name,
 			IsInternal: false,
-			Partitions: []kmsg.MetadataResponseTopicPartition{
-				{
-					ErrorCode:   0,
-					Partition:   0,
-					Leader:      h.broker.NodeID,
-					LeaderEpoch: 0,
-					Replicas:    []int32{h.broker.NodeID},
-					ISR:         []int32{h.broker.NodeID},
-				},
-			},
+		}
+		for i := int32(0); i < t.NPartitions; i++ {
+			topic.Partitions = append(topic.Partitions, kmsg.MetadataResponseTopicPartition{
+				ErrorCode:   0,
+				Partition:   i,
+				Leader:      h.broker.NodeID,
+				LeaderEpoch: 0,
+				Replicas:    []int32{h.broker.NodeID},
+				ISR:         []int32{h.broker.NodeID},
+			})
 		}
 		response.Topics = append(response.Topics, topic)
 	}

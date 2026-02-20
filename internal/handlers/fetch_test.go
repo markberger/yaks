@@ -43,22 +43,18 @@ func mockGetObjectReturn(data []byte) *s3.GetObjectOutput {
 }
 
 // seedBatch creates a topic and commits a record batch, returning the committed output.
-func seedBatch(ms metastore.Metastore, topic string, partition int32, nRecords int64, s3Key string) metastore.BatchCommitOutputV2 {
+func seedBatch(ms metastore.Metastore, topic string, partition int32, nRecords int64, s3Key string, byteLength int64) metastore.BatchCommitOutputV2 {
 	ms.CreateTopicV2(topic, partition+1)
 	outputs, _ := ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
-		{TopicID: ms.GetTopicByName(topic).ID, Partition: partition, NRecords: nRecords, S3Key: s3Key},
+		{TopicID: ms.GetTopicByName(topic).ID, Partition: partition, NRecords: nRecords, S3Key: s3Key, ByteLength: byteLength},
 	})
 	return outputs[0]
 }
 
 func (s *HandlersTestSuite) TestFetch_Success_PatchesFirstOffset() {
 	ms := s.TestDB.InitMetastore()
-	output := seedBatch(ms, "fetch-test", 0, 5, "batches/001.batch")
-
-	// S3 stores the raw record batch bytes; nRecords in the metastore is just
-	// metadata about how many Kafka records the batch contains — it doesn't
-	// determine the byte length of the S3 object.
 	batchBytes := fakeBatchData(61)
+	output := seedBatch(ms, "fetch-test", 0, 5, "batches/001.batch", int64(len(batchBytes)))
 	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(batchBytes), nil)
 
@@ -87,7 +83,7 @@ func (s *HandlersTestSuite) TestFetch_Success_PatchesFirstOffset() {
 
 func (s *HandlersTestSuite) TestFetch_OffsetPastAllBatches_EmptyResponse() {
 	ms := s.TestDB.InitMetastore()
-	seedBatch(ms, "fetch-empty", 0, 5, "batches/002.batch")
+	seedBatch(ms, "fetch-empty", 0, 5, "batches/002.batch", 61)
 
 	mockS3 := &s3_client.MockS3Client{}
 	// No GetObject calls expected
@@ -107,16 +103,16 @@ func (s *HandlersTestSuite) TestFetch_MultipleBatches_Concatenated() {
 	ms.CreateTopicV2("fetch-multi", 1)
 	topicID := ms.GetTopicByName("fetch-multi").ID
 
-	// Commit two batches sequentially
-	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
-		{TopicID: topicID, Partition: 0, NRecords: 3, S3Key: "batch/a.batch"},
-	})
-	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
-		{TopicID: topicID, Partition: 0, NRecords: 2, S3Key: "batch/b.batch"},
-	})
-
 	dataA := fakeBatchData(16)
 	dataB := fakeBatchData(32)
+
+	// Commit two batches sequentially
+	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
+		{TopicID: topicID, Partition: 0, NRecords: 3, S3Key: "batch/a.batch", ByteLength: int64(len(dataA))},
+	})
+	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
+		{TopicID: topicID, Partition: 0, NRecords: 2, S3Key: "batch/b.batch", ByteLength: int64(len(dataB))},
+	})
 	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
 		return *in.Key == "batch/a.batch"
@@ -145,7 +141,7 @@ func (s *HandlersTestSuite) TestFetch_MultipleBatches_Concatenated() {
 
 func (s *HandlersTestSuite) TestFetch_S3Failure_ReturnsError() {
 	ms := s.TestDB.InitMetastore()
-	seedBatch(ms, "fetch-s3fail", 0, 5, "batches/fail.batch")
+	seedBatch(ms, "fetch-s3fail", 0, 5, "batches/fail.batch", 61)
 
 	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(

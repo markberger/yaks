@@ -56,8 +56,8 @@ func (m *MockMetastore) CommitRecordBatchesV2(batches []metastore.RecordBatchV2)
 	return args.Get(0).([]metastore.BatchCommitOutputV2), args.Error(1)
 }
 
-func (m *MockMetastore) GetRecordBatchesV2(topicName string, startOffset int64) ([]metastore.RecordBatchV2, error) {
-	args := m.Called(topicName, startOffset)
+func (m *MockMetastore) GetRecordBatchesV2(topicName string, partition int32, startOffset int64) ([]metastore.RecordBatchV2, error) {
+	args := m.Called(topicName, partition, startOffset)
 	return args.Get(0).([]metastore.RecordBatchV2), args.Error(1)
 }
 
