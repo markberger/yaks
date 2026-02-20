@@ -251,7 +251,9 @@ func (m *GormMetastore) MaterializeRecordBatchEvents(nRecords int32) error {
 				e.n_records,
 				tp.end_offset + sum(e.n_records) over (partition by e.topic_id, e.partition order by e.id) - e.n_records as start_offset,
 				tp.end_offset + sum(e.n_records) over (partition by e.topic_id, e.partition order by e.id) as end_offset,
-				e.s3_key
+				e.s3_key,
+				e.byte_offset,
+				e.byte_length
 			from locked_events e
 			join locked_partitions tp
 				on tp.topic_id = e.topic_id
@@ -259,8 +261,8 @@ func (m *GormMetastore) MaterializeRecordBatchEvents(nRecords int32) error {
 		),
 
 		insert_batches as (
-			insert into record_batch_v2(topic_id, partition, start_offset, n_records, s3_key)
-			select topic_id, partition, start_offset, n_records, s3_key
+			insert into record_batch_v2(topic_id, partition, start_offset, n_records, s3_key, byte_offset, byte_length)
+			select topic_id, partition, start_offset, n_records, s3_key, byte_offset, byte_length
 			from offsets
 			returning topic_id, partition
 		),

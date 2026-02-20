@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"hash/crc32"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/markberger/yaks/internal/metastore"
+	"github.com/markberger/yaks/internal/buffer"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kerr"
@@ -122,7 +123,12 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_Success() {
 	mockS3 := &MockS3Client{}
 	mockS3.On("PutObject", mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
 
-	handler := NewProduceRequestHandlerWithS3(metastore, "test-bucket", mockS3)
+	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", 50*time.Millisecond, 1<<30)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go buf.Start(ctx)
+
+	handler := NewProduceRequestHandler(metastore, buf)
 
 	// Create valid request
 	records := createValidRecordBatch()
@@ -139,16 +145,24 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_Success() {
 	require.Equal(s.T(), "test-topic-success", response.Topics[0].Topic)
 	require.Len(s.T(), response.Topics[0].Partitions, 1)
 	require.Equal(s.T(), int16(0), response.Topics[0].Partitions[0].ErrorCode)
-	require.GreaterOrEqual(s.T(), response.Topics[0].Partitions[0].BaseOffset, int64(0))
+	// Buffered produce returns -1 (offset assigned by materializer)
+	require.Equal(s.T(), int64(-1), response.Topics[0].Partitions[0].BaseOffset)
 
 	mockS3.AssertExpectations(s.T())
+
+	// Verify CommitRecordBatchEvents was called (not CommitRecordBatchesV2)
+	events, err := metastore.GetRecordBatchEvents("test-topic-success")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), events, 1)
+	require.Equal(s.T(), int64(1), events[0].NRecords)
 }
 
 func (s *HandlersTestSuite) TestProduceRequestHandler_TransactionRejection() {
 	// Setup
 	metastore := s.TestDB.InitMetastore()
 	mockS3 := &MockS3Client{}
-	handler := NewProduceRequestHandlerWithS3(metastore, "test-bucket", mockS3)
+	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", time.Hour, 1<<30)
+	handler := NewProduceRequestHandler(metastore, buf)
 
 	// Create request with transaction ID
 	request := kmsg.NewProduceRequest()
@@ -167,7 +181,8 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_InvalidTopic() {
 	// Setup
 	metastore := s.TestDB.InitMetastore()
 	mockS3 := &MockS3Client{}
-	handler := NewProduceRequestHandlerWithS3(metastore, "test-bucket", mockS3)
+	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", time.Hour, 1<<30)
+	handler := NewProduceRequestHandler(metastore, buf)
 
 	// Create request for non-existent topic
 	records := createValidRecordBatch()
@@ -192,7 +207,8 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_InvalidPartition() {
 	require.NoError(s.T(), err)
 
 	mockS3 := &MockS3Client{}
-	handler := NewProduceRequestHandlerWithS3(metastore, "test-bucket", mockS3)
+	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", time.Hour, 1<<30)
+	handler := NewProduceRequestHandler(metastore, buf)
 
 	// Create request for invalid partition
 	records := createValidRecordBatch()
@@ -217,7 +233,8 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_CorruptMessage() {
 	require.NoError(s.T(), err)
 
 	mockS3 := &MockS3Client{}
-	handler := NewProduceRequestHandlerWithS3(metastore, "test-bucket", mockS3)
+	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", time.Hour, 1<<30)
+	handler := NewProduceRequestHandler(metastore, buf)
 
 	// Create request with corrupt records
 	corruptRecords := []byte{0x00, 0x01, 0x02} // Invalid record batch
@@ -244,7 +261,12 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_S3Failure() {
 	mockS3 := &MockS3Client{}
 	mockS3.On("PutObject", mock.Anything, mock.Anything).Return((*s3.PutObjectOutput)(nil), errors.New("S3 upload failed"))
 
-	handler := NewProduceRequestHandlerWithS3(metastore, "test-bucket", mockS3)
+	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", 50*time.Millisecond, 1<<30)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go buf.Start(ctx)
+
+	handler := NewProduceRequestHandler(metastore, buf)
 
 	// Create valid request
 	records := createValidRecordBatch()
@@ -260,43 +282,6 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_S3Failure() {
 	mockS3.AssertExpectations(s.T())
 }
 
-// Mock metastore that fails on CommitRecordBatchesV2
-type mockMetastoreCommitFails struct {
-	metastore.GormMetastore
-}
-
-func (m *mockMetastoreCommitFails) CommitRecordBatchesV2(batches []metastore.RecordBatchV2) ([]metastore.BatchCommitOutputV2, error) {
-	return nil, errors.New("metastore commit failed")
-}
-
-func (s *HandlersTestSuite) TestProduceRequestHandler_MetastoreFailure() {
-	// Setup
-	wrappedMetastore := s.TestDB.InitMetastore()
-	err := wrappedMetastore.CreateTopicV2("test-topic-metastore-fail", 1)
-	require.NoError(s.T(), err)
-
-	// Create mock metastore that fails on commit
-	metastore := &mockMetastoreCommitFails{*wrappedMetastore}
-
-	mockS3 := &MockS3Client{}
-	mockS3.On("PutObject", mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
-
-	handler := NewProduceRequestHandlerWithS3(metastore, "test-bucket", mockS3)
-
-	// Create valid request
-	records := createValidRecordBatch()
-	request := createValidProduceRequest("test-topic-metastore-fail", 0, records)
-
-	// Execute
-	_, err = handler.Handle(request)
-
-	// Verify
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "record commit failed")
-
-	mockS3.AssertExpectations(s.T())
-}
-
 func (s *HandlersTestSuite) TestProduceRequestHandler_ResponseMapping() {
 	// Setup
 	metastore := s.TestDB.InitMetastore()
@@ -306,7 +291,12 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_ResponseMapping() {
 	mockS3 := &MockS3Client{}
 	mockS3.On("PutObject", mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
 
-	handler := NewProduceRequestHandlerWithS3(metastore, "test-bucket", mockS3)
+	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", 50*time.Millisecond, 1<<30)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go buf.Start(ctx)
+
+	handler := NewProduceRequestHandler(metastore, buf)
 
 	// Create request with multiple partitions
 	records := createValidRecordBatch()
@@ -333,11 +323,11 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_ResponseMapping() {
 	require.Equal(s.T(), "test-topic-mapping", response.Topics[0].Topic)
 	require.Len(s.T(), response.Topics[0].Partitions, 2)
 
-	// Verify both partitions have correct responses
+	// Verify both partitions have correct responses with BaseOffset = -1
 	for i, partition := range response.Topics[0].Partitions {
 		require.Equal(s.T(), int32(i), partition.Partition)
 		require.Equal(s.T(), int16(0), partition.ErrorCode)
-		require.GreaterOrEqual(s.T(), partition.BaseOffset, int64(0)) // Base offset should be >= 0
+		require.Equal(s.T(), int64(-1), partition.BaseOffset)
 	}
 
 	mockS3.AssertExpectations(s.T())
@@ -347,7 +337,8 @@ func (s *HandlersTestSuite) TestProduceRequestHandler_HandlerInterface() {
 	// Setup
 	metastore := s.TestDB.InitMetastore()
 	mockS3 := &MockS3Client{}
-	handler := NewProduceRequestHandlerWithS3(metastore, "test-bucket", mockS3)
+	buf := buffer.NewWriteBuffer(mockS3, metastore, "test-bucket", time.Hour, 1<<30)
+	handler := NewProduceRequestHandler(metastore, buf)
 
 	// Verify interface methods
 	require.Equal(s.T(), kmsg.Produce, handler.Key())

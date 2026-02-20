@@ -95,8 +95,10 @@ func (s *IntegrationTestsSuite) NewAgent() *agent.Agent {
 	}
 
 	cfg := config.Config{
-		BrokerHost: "localhost",
-		BrokerPort: 9092,
+		BrokerHost:      "localhost",
+		BrokerPort:      9092,
+		FlushIntervalMs: 100,
+		FlushBytes:      5242880,
 		S3: s3_client.S3ClientConfig{
 			Endpoint:        "http://localhost:4566",
 			Region:          "us-east-1",

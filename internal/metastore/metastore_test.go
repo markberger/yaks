@@ -121,6 +121,71 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_Basic() {
 	}
 }
 
+func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_ByteFieldsPropagation() {
+	metastore := s.TestDB.InitMetastore()
+	T := s.T()
+
+	topicName := "byte-fields-topic"
+	err := metastore.CreateTopicV2(topicName, 1)
+	require.NoError(T, err)
+
+	topic := metastore.GetTopicByName(topicName)
+	require.NotNil(T, topic)
+
+	// Create events with byte offset/length fields (simulating packed S3 object)
+	events := []RecordBatchEvent{
+		{
+			TopicID:    topic.ID,
+			Partition:  0,
+			NRecords:   5,
+			S3Key:      "data/packed-object.batch",
+			ByteOffset: 0,
+			ByteLength: 100,
+			Processed:  false,
+		},
+		{
+			TopicID:    topic.ID,
+			Partition:  0,
+			NRecords:   3,
+			S3Key:      "data/packed-object.batch",
+			ByteOffset: 100,
+			ByteLength: 200,
+			Processed:  false,
+		},
+	}
+
+	err = metastore.CommitRecordBatchEvents(events)
+	require.NoError(T, err)
+
+	err = metastore.MaterializeRecordBatchEvents(50)
+	require.NoError(T, err)
+
+	// Verify byte fields are carried through to RecordBatchV2
+	batches, err := metastore.GetRecordBatchesV2(topicName, 0)
+	require.NoError(T, err)
+	require.Len(T, batches, 2)
+
+	// Find batches by byte offset
+	var batch0, batch100 *RecordBatchV2
+	for i := range batches {
+		if batches[i].ByteOffset == 0 {
+			batch0 = &batches[i]
+		} else if batches[i].ByteOffset == 100 {
+			batch100 = &batches[i]
+		}
+	}
+	require.NotNil(T, batch0, "batch with ByteOffset=0 not found")
+	require.NotNil(T, batch100, "batch with ByteOffset=100 not found")
+
+	assert.Equal(T, int64(0), batch0.ByteOffset)
+	assert.Equal(T, int64(100), batch0.ByteLength)
+	assert.Equal(T, "data/packed-object.batch", batch0.S3Key)
+
+	assert.Equal(T, int64(100), batch100.ByteOffset)
+	assert.Equal(T, int64(200), batch100.ByteLength)
+	assert.Equal(T, "data/packed-object.batch", batch100.S3Key)
+}
+
 func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionOffsetCalculation() {
 	metastore := s.TestDB.InitMetastore()
 	T := s.T()

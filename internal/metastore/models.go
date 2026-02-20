@@ -44,12 +44,14 @@ type TopicPartition struct {
 
 type RecordBatchEvent struct {
 	BaseModel
-	TopicID   uuid.UUID `gorm:"type:uuid; not null; index; index:idx_rbe_unprocessed_ordered"`
-	Topic     TopicV2   `gorm:"foreignKey:TopicID"`
-	Partition int32     `gorm:"type:integer; not null; index:idx_rbe_unprocessed_ordered"`
-	NRecords  int64     `gorm:"type:bigint; not null;"`
-	S3Key     string    `gorm:"size:255; not null"`
-	Processed bool      `gorm:"default:false; index:idx_rbe_unprocessed_ordered"`
+	TopicID    uuid.UUID `gorm:"type:uuid; not null; index; index:idx_rbe_unprocessed_ordered"`
+	Topic      TopicV2   `gorm:"foreignKey:TopicID"`
+	Partition  int32     `gorm:"type:integer; not null; index:idx_rbe_unprocessed_ordered"`
+	NRecords   int64     `gorm:"type:bigint; not null;"`
+	S3Key      string    `gorm:"size:255; not null"`
+	ByteOffset int64     `gorm:"type:bigint; not null; default:0"`
+	ByteLength int64     `gorm:"type:bigint; not null; default:0"`
+	Processed  bool      `gorm:"default:false; index:idx_rbe_unprocessed_ordered"`
 }
 
 type RecordBatchV2 struct {
@@ -61,4 +63,6 @@ type RecordBatchV2 struct {
 	StartOffset int64  `gorm:"type:bigint; not null; check:start_offset >= 0"`
 	NRecords    int64  `gorm:"type:bigint; not null; check:n_records >= 0"`
 	S3Key       string `gorm:"size:255; not null"`
+	ByteOffset  int64  `gorm:"type:bigint; not null; default:0"`
+	ByteLength  int64  `gorm:"type:bigint; not null; default:0"`
 }

@@ -78,7 +78,9 @@ func (s *IntegrationTestsSuite) TestProduceKgo() {
 	if err := cl.ProduceSync(ctx, record).FirstErr(); err != nil {
 		T.Fatalf("record had a produce error while synchronously producing: %v\n", err)
 	}
-	if err := agent.Metastore.MaterializeRecordBatchEvents(1); err != nil {
+
+	// Materialize the buffered events so we can query them
+	if err := agent.Metastore.MaterializeRecordBatchEvents(10); err != nil {
 		T.Fatalf("failed to materialize record batch events")
 	}
 
@@ -94,7 +96,7 @@ func (s *IntegrationTestsSuite) TestProduceKgo() {
 	if err := cl.ProduceSync(ctx, record).FirstErr(); err != nil {
 		T.Fatalf("record had a produce error while synchronously producing: %v\n", err)
 	}
-	if err := agent.Metastore.MaterializeRecordBatchEvents(1); err != nil {
+	if err := agent.Metastore.MaterializeRecordBatchEvents(10); err != nil {
 		T.Fatalf("failed to materialize record batch events")
 	}
 

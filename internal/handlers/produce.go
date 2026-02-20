@@ -1,36 +1,27 @@
 package handlers
 
 import (
-	"bytes"
-	"context"
 	"errors"
-	"fmt"
 
-	"github.com/google/uuid"
+	"github.com/markberger/yaks/internal/buffer"
 	"github.com/markberger/yaks/internal/metastore"
-	"github.com/markberger/yaks/internal/s3_client"
 	log "github.com/sirupsen/logrus"
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kmsg"
-
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 type ProduceRequestHandler struct {
-	metastore  metastore.Metastore
-	bucketName string
-	s3Client   s3_client.S3Client
+	metastore metastore.Metastore
+	buffer    *buffer.WriteBuffer
 }
 
-// NewProduceRequestHandlerWithS3 creates a handler with injectable S3 client for testing
-func NewProduceRequestHandlerWithS3(m metastore.Metastore, bucketName string, s3Client s3_client.S3Client) *ProduceRequestHandler {
+func NewProduceRequestHandler(m metastore.Metastore, buf *buffer.WriteBuffer) *ProduceRequestHandler {
 	return &ProduceRequestHandler{
-		metastore:  m,
-		bucketName: bucketName,
-		s3Client:   s3Client,
+		metastore: m,
+		buffer:    buf,
 	}
 }
+
 func (h *ProduceRequestHandler) Key() kmsg.Key     { return kmsg.Produce }
 func (h *ProduceRequestHandler) MinVersion() int16 { return 3 }
 func (h *ProduceRequestHandler) MaxVersion() int16 { return 3 }
@@ -44,25 +35,16 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	response.SetVersion(request.GetVersion())
 	response.ThrottleMillis = 0
 
-	// Structure to track batch information for mapping results back to responses
-	type batchInfo struct {
-		batch          metastore.RecordBatchV2
-		topicIndex     int
-		partitionIndex int
-		numRecords     int32
-	}
+	// Track distinct flush promises to wait on
+	promiseSet := make(map[*buffer.FlushPromise]struct{})
 
-	var allBatches []metastore.RecordBatchV2
-	var batchInfos []batchInfo
-
-	// Phase 1: Process all topics/partitions, validate, upload to S3, and collect batches
-	for topicIndex, topic := range request.Topics {
+	for _, topic := range request.Topics {
 		var topicResponse kmsg.ProduceResponseTopic
 		topicResponse.Topic = topic.Topic
 
 		metaTopic := h.metastore.GetTopicByName(topic.Topic)
 
-		for partitionIndex, partition := range topic.Partitions {
+		for _, partition := range topic.Partitions {
 			partitionResponse := kmsg.NewProduceResponseTopicPartition()
 			partitionResponse.Partition = partition.Partition
 
@@ -82,64 +64,27 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 				continue
 			}
 
-			// Push batch to s3
-			// TODO: add date partition
-			key := fmt.Sprintf("topics/%s/%s.batch", topic.Topic, uuid.New().String())
-			size := int64(len(partition.Records))
-			reader := bytes.NewReader(partition.Records)
-			input := &s3.PutObjectInput{
-				Bucket:        aws.String(h.bucketName), // Use the bucket name directly
-				Key:           aws.String(key),          // object key/path
-				Body:          reader,                   // io.Reader
-				ContentLength: &size,                    // must match reader size
-				ContentType:   aws.String("application/octet-stream"),
-			}
-			_, err := h.s3Client.PutObject(context.Background(), input)
-			if err != nil {
-				return nil, err
-			}
-
-			// Collect batch for later database commit
-			batch := metastore.RecordBatchV2{
+			// Submit to write buffer
+			key := buffer.PartitionKey{
 				TopicID:   metaTopic.ID,
+				TopicName: topic.Topic,
 				Partition: partition.Partition,
-				NRecords:  int64(recordBatch.NumRecords),
-				S3Key:     key,
 			}
-			allBatches = append(allBatches, batch)
-			batchInfos = append(batchInfos, batchInfo{
-				batch:          batch,
-				topicIndex:     topicIndex,
-				partitionIndex: partitionIndex,
-				numRecords:     recordBatch.NumRecords,
-			})
+			promise := h.buffer.Submit(key, partition.Records, int64(recordBatch.NumRecords))
+			promiseSet[promise] = struct{}{}
 
-			// Add successful partition response (will be updated with base offset later)
+			// Offset is assigned later by the materializer
+			partitionResponse.BaseOffset = -1
 			partitionResponse.ErrorCode = 0
 			topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
 		}
 		response.Topics = append(response.Topics, topicResponse)
 	}
 
-	// Phase 2: Commit all batches to database in a single transaction (if we have any successful batches)
-	if len(allBatches) > 0 {
-		batchCommitOutputs, err := h.metastore.CommitRecordBatchesV2(allBatches)
-		if err != nil {
-			return nil, fmt.Errorf("record commit failed: %v", err)
-		}
-
-		if len(batchCommitOutputs) != len(allBatches) {
-			return nil, fmt.Errorf("record commit returned unexpected number of results: expected %d, got %d", len(allBatches), len(batchCommitOutputs))
-		}
-
-		// Phase 3: Map database results back to partition responses
-		for i, output := range batchCommitOutputs {
-			batchInfo := batchInfos[i]
-
-			// Find the corresponding partition response and update it with the base offset
-			topicResponse := &response.Topics[batchInfo.topicIndex]
-			partitionResponse := &topicResponse.Partitions[batchInfo.partitionIndex]
-			partitionResponse.BaseOffset = output.BaseOffset
+	// Wait for all flush promises
+	for promise := range promiseSet {
+		if err := promise.Wait(); err != nil {
+			return nil, err
 		}
 	}
 
