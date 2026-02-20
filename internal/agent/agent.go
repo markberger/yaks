@@ -47,6 +47,7 @@ func (a *Agent) AddHandlers() {
 	a.broker.Add(handlers.NewCreateTopicsRequestHandler(a.Metastore))
 	a.broker.Add(handlers.NewProduceRequestHandler(a.Metastore, a.buffer))
 	a.broker.Add(handlers.NewFetchRequestHandler(a.Metastore, a.s3Client, a.bucket))
+	a.broker.Add(handlers.NewFindCoordinatorRequestHandler(a.broker))
 }
 
 func (a *Agent) ListenAndServe(ctx context.Context) {
