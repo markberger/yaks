@@ -23,3 +23,4 @@ services:
     volumes:
       - "${LOCALSTACK_VOLUME_DIR:-./.localstack-volume}:/var/lib/localstack"
       - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./integration/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh"

@@ -23,11 +23,6 @@ type ProduceRequestHandler struct {
 	s3Client   s3_client.S3Client
 }
 
-func NewProduceRequestHandler(m metastore.Metastore) *ProduceRequestHandler {
-	s3Client := s3_client.CreateS3Client(s3_client.DefaultS3Config())
-	return NewProduceRequestHandlerWithS3(m, "test-bucket", s3Client)
-}
-
 // NewProduceRequestHandlerWithS3 creates a handler with injectable S3 client for testing
 func NewProduceRequestHandlerWithS3(m metastore.Metastore, bucketName string, s3Client s3_client.S3Client) *ProduceRequestHandler {
 	return &ProduceRequestHandler{

@@ -12,7 +12,9 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/go-connections/nat"
 	"github.com/markberger/yaks/internal/agent"
+	"github.com/markberger/yaks/internal/config"
 	"github.com/markberger/yaks/internal/metastore"
+	"github.com/markberger/yaks/internal/s3_client"
 	"github.com/stretchr/testify/suite"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/localstack"
@@ -86,14 +88,27 @@ func TestIntegrationsTestSuite(t *testing.T) {
 
 func (s *IntegrationTestsSuite) NewAgent() *agent.Agent {
 	db := s.TestDB.InitDB()
-	metastore := metastore.NewGormMetastore(db)
-	err := metastore.ApplyMigrations()
+	m := metastore.NewGormMetastore(db)
+	err := m.ApplyMigrations()
 	if err != nil {
 		log.Fatalf("failed to apply migrations: %v", err)
 	}
 
+	cfg := config.Config{
+		BrokerHost: "localhost",
+		BrokerPort: 9092,
+		S3: s3_client.S3ClientConfig{
+			Endpoint:        "http://localhost:4566",
+			Region:          "us-east-1",
+			AccessKeyID:     "test",
+			SecretAccessKey: "test",
+			UsePathStyle:    true,
+			Bucket:          "test-bucket",
+		},
+	}
+
 	// Create agent and start serving
-	agent := agent.NewAgent(db, "localhost", 9092)
+	agent := agent.NewAgent(db, cfg)
 	agent.AddHandlers()
 
 	ctx, cancelFn := context.WithCancel(context.Background())

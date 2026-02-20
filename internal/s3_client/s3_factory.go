@@ -12,26 +12,16 @@ import (
 
 // S3ClientConfig holds configuration for S3 client creation
 type S3ClientConfig struct {
-	Endpoint        string
-	Region          string
-	AccessKeyID     string
-	SecretAccessKey string
-	UsePathStyle    bool
+	Endpoint        string `env:"YAKS_S3_ENDPOINT"   envDefault:"http://localhost:4566"`
+	Region          string `env:"YAKS_S3_REGION"     envDefault:"us-east-1"`
+	AccessKeyID     string `env:"YAKS_S3_ACCESS_KEY" envDefault:"test"`
+	SecretAccessKey string `env:"YAKS_S3_SECRET_KEY" envDefault:"test"`
+	UsePathStyle    bool   `env:"YAKS_S3_PATH_STYLE" envDefault:"true"`
+	Bucket          string `env:"YAKS_S3_BUCKET"     envDefault:"test-bucket"`
 }
 
-// DefaultS3Config returns the default LocalStack configuration
-func DefaultS3Config() S3ClientConfig {
-	return S3ClientConfig{
-		Endpoint:        "http://localhost:4566",
-		Region:          "us-east-1",
-		AccessKeyID:     "test",
-		SecretAccessKey: "test",
-		UsePathStyle:    true,
-	}
-}
-
-// CreateS3Client creates an S3 client with the given configuration
-func CreateS3Client(cfg S3ClientConfig) S3Client {
+// CreateRawS3Client creates a raw *s3.Client from the given configuration
+func CreateRawS3Client(cfg S3ClientConfig) *s3.Client {
 	ctx := context.Background()
 
 	staticCredentialsProvider := credentials.NewStaticCredentialsProvider(
@@ -48,10 +38,13 @@ func CreateS3Client(cfg S3ClientConfig) S3Client {
 		log.Fatalf("failed to load config: %v", err)
 	}
 
-	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+	return s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(cfg.Endpoint)
 		o.UsePathStyle = cfg.UsePathStyle
 	})
+}
 
-	return NewRealS3Client(client)
+// CreateS3Client creates an S3 client with the given configuration
+func CreateS3Client(cfg S3ClientConfig) S3Client {
+	return NewRealS3Client(CreateRawS3Client(cfg))
 }

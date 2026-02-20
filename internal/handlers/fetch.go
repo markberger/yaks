@@ -5,11 +5,9 @@ import (
 	"encoding/binary"
 	"io"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/markberger/yaks/internal/metastore"
+	"github.com/markberger/yaks/internal/s3_client"
 	log "github.com/sirupsen/logrus"
 	"github.com/twmb/franz-go/pkg/kmsg"
 )
@@ -20,29 +18,9 @@ type FetchRequestHandler struct {
 	bucketName *string
 }
 
-func NewFetchRequestHandler(metastore metastore.Metastore) *FetchRequestHandler {
-	ctx := context.Background()
-	localstackEndpoint := "http://localhost:4566"
-
-	awsAccessKeyID := "test"
-	awsSecretAccessKey := "test"
-	staticCredentialsProvider := credentials.NewStaticCredentialsProvider(awsAccessKeyID, awsSecretAccessKey, "")
-
-	// Load config with handcoded creds
-	cfg, err := config.LoadDefaultConfig(ctx,
-		config.WithRegion("us-east-1"),
-		config.WithCredentialsProvider(staticCredentialsProvider),
-	)
-	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
-	}
-
-	// Create s3Client. Override endpoint and force path style for Localstack
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(localstackEndpoint)
-		o.UsePathStyle = true
-	})
-	bucketName := "test-bucket"
+func NewFetchRequestHandler(metastore metastore.Metastore, s3Cfg s3_client.S3ClientConfig) *FetchRequestHandler {
+	client := s3_client.CreateRawS3Client(s3Cfg)
+	bucketName := s3Cfg.Bucket
 	return &FetchRequestHandler{metastore, client, &bucketName}
 }
 

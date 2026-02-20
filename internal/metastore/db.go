@@ -12,12 +12,12 @@ import (
 
 // Config holds the database connection configuration
 type Config struct {
-	Host     string
-	Port     int
-	User     string
-	Password string
-	DBName   string
-	SSLMode  string
+	Host     string `env:"YAKS_DB_HOST"     envDefault:"localhost"`
+	Port     int    `env:"YAKS_DB_PORT"     envDefault:"5432"`
+	User     string `env:"YAKS_DB_USER"     envDefault:"testuser"`
+	Password string `env:"YAKS_DB_PASSWORD" envDefault:"testpassword"`
+	DBName   string `env:"YAKS_DB_NAME"     envDefault:"testdb"`
+	SSLMode  string `env:"YAKS_DB_SSLMODE"  envDefault:"disable"`
 }
 
 // Connect establishes a connection to the database using the provided configuration
