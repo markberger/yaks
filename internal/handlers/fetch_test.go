@@ -139,6 +139,38 @@ func (s *HandlersTestSuite) TestFetch_MultipleBatches_Concatenated() {
 	require.Equal(s.T(), uint64(3), firstOffsetB)
 }
 
+func (s *HandlersTestSuite) TestFetch_HighWatermark_ReflectsEndOffset() {
+	ms := s.TestDB.InitMetastore()
+	batchBytes := fakeBatchData(61)
+	seedBatch(ms, "fetch-hwm", 0, 5, "batches/hwm.batch", int64(len(batchBytes)))
+
+	mockS3 := &s3_client.MockS3Client{}
+	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(batchBytes), nil)
+
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket")
+	resp, err := handler.Handle(createFetchRequest("fetch-hwm", 0, 0))
+
+	require.NoError(s.T(), err)
+	fetchResp := resp.(*kmsg.FetchResponse)
+	require.Len(s.T(), fetchResp.Topics[0].Partitions, 1)
+	require.Equal(s.T(), int64(5), fetchResp.Topics[0].Partitions[0].HighWatermark)
+}
+
+func (s *HandlersTestSuite) TestFetch_HighWatermark_EmptyPartition() {
+	ms := s.TestDB.InitMetastore()
+	ms.CreateTopicV2("fetch-hwm-empty", 1)
+
+	mockS3 := &s3_client.MockS3Client{}
+
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket")
+	resp, err := handler.Handle(createFetchRequest("fetch-hwm-empty", 0, 0))
+
+	require.NoError(s.T(), err)
+	fetchResp := resp.(*kmsg.FetchResponse)
+	require.Len(s.T(), fetchResp.Topics[0].Partitions, 1)
+	require.Equal(s.T(), int64(0), fetchResp.Topics[0].Partitions[0].HighWatermark)
+}
+
 func (s *HandlersTestSuite) TestFetch_S3Failure_ReturnsError() {
 	ms := s.TestDB.InitMetastore()
 	seedBatch(ms, "fetch-s3fail", 0, 5, "batches/fail.batch", 61)

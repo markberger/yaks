@@ -37,6 +37,16 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 		responseTopic := kmsg.NewFetchResponseTopic()
 		responseTopic.Topic = t.Topic
 
+		// Build high water mark map from topic partitions
+		hwmMap := make(map[int32]int64)
+		topicPartitions, err := h.metastore.GetTopicPartitions(t.Topic)
+		if err != nil {
+			return nil, err
+		}
+		for _, tp := range topicPartitions {
+			hwmMap[tp.Partition] = tp.EndOffset
+		}
+
 		for _, p := range t.Partitions {
 			batchesMetadata, err := h.metastore.GetRecordBatchesV2(t.Topic, p.Partition, p.FetchOffset)
 			if err != nil {
@@ -46,6 +56,7 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 			responsePartition := kmsg.NewFetchResponseTopicPartition()
 			responsePartition.Partition = p.Partition
 			responsePartition.ErrorCode = 0
+			responsePartition.HighWatermark = hwmMap[p.Partition]
 
 			var recordBatches []byte
 			for _, metadata := range batchesMetadata {
