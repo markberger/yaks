@@ -1335,3 +1335,121 @@ func (s *MetastoreTestSuite) TestCommitRecordBatchesV2_WindowFunctionWithExistin
 	require.Len(T, partitions, 1)
 	assert.Equal(T, int64(16), partitions[0].EndOffset, "Partition end_offset should be updated to 16")
 }
+
+func (s *MetastoreTestSuite) TestCommitOffset_NewOffset() {
+	ms := s.TestDB.InitMetastore()
+	T := s.T()
+
+	ms.CreateTopicV2("offset-topic", 1)
+	topic := ms.GetTopicByName("offset-topic")
+	require.NotNil(T, topic)
+
+	err := ms.CommitOffset("group-1", topic.ID, 0, 42, "some-metadata")
+	require.NoError(T, err)
+
+	offset, metadata, err := ms.FetchOffset("group-1", topic.ID, 0)
+	require.NoError(T, err)
+	assert.Equal(T, int64(42), offset)
+	assert.Equal(T, "some-metadata", metadata)
+}
+
+func (s *MetastoreTestSuite) TestCommitOffset_UpsertExisting() {
+	ms := s.TestDB.InitMetastore()
+	T := s.T()
+
+	ms.CreateTopicV2("upsert-topic", 1)
+	topic := ms.GetTopicByName("upsert-topic")
+	require.NotNil(T, topic)
+
+	err := ms.CommitOffset("group-1", topic.ID, 0, 5, "first")
+	require.NoError(T, err)
+
+	err = ms.CommitOffset("group-1", topic.ID, 0, 10, "second")
+	require.NoError(T, err)
+
+	offset, metadata, err := ms.FetchOffset("group-1", topic.ID, 0)
+	require.NoError(T, err)
+	assert.Equal(T, int64(10), offset)
+	assert.Equal(T, "second", metadata)
+}
+
+func (s *MetastoreTestSuite) TestFetchOffset_Exists() {
+	ms := s.TestDB.InitMetastore()
+	T := s.T()
+
+	ms.CreateTopicV2("fetch-offset-topic", 1)
+	topic := ms.GetTopicByName("fetch-offset-topic")
+	require.NotNil(T, topic)
+
+	err := ms.CommitOffset("group-1", topic.ID, 0, 99, "my-meta")
+	require.NoError(T, err)
+
+	offset, metadata, err := ms.FetchOffset("group-1", topic.ID, 0)
+	require.NoError(T, err)
+	assert.Equal(T, int64(99), offset)
+	assert.Equal(T, "my-meta", metadata)
+}
+
+func (s *MetastoreTestSuite) TestFetchOffset_NoCommittedOffset() {
+	ms := s.TestDB.InitMetastore()
+	T := s.T()
+
+	ms.CreateTopicV2("no-offset-topic", 1)
+	topic := ms.GetTopicByName("no-offset-topic")
+	require.NotNil(T, topic)
+
+	offset, metadata, err := ms.FetchOffset("group-1", topic.ID, 0)
+	require.NoError(T, err)
+	assert.Equal(T, int64(-1), offset)
+	assert.Equal(T, "", metadata)
+}
+
+func (s *MetastoreTestSuite) TestCommitOffset_MultipleGroups() {
+	ms := s.TestDB.InitMetastore()
+	T := s.T()
+
+	ms.CreateTopicV2("multi-group-topic", 1)
+	topic := ms.GetTopicByName("multi-group-topic")
+	require.NotNil(T, topic)
+
+	err := ms.CommitOffset("group-a", topic.ID, 0, 10, "")
+	require.NoError(T, err)
+	err = ms.CommitOffset("group-b", topic.ID, 0, 20, "")
+	require.NoError(T, err)
+
+	offsetA, _, err := ms.FetchOffset("group-a", topic.ID, 0)
+	require.NoError(T, err)
+	assert.Equal(T, int64(10), offsetA)
+
+	offsetB, _, err := ms.FetchOffset("group-b", topic.ID, 0)
+	require.NoError(T, err)
+	assert.Equal(T, int64(20), offsetB)
+}
+
+func (s *MetastoreTestSuite) TestCommitOffset_MultiplePartitions() {
+	ms := s.TestDB.InitMetastore()
+	T := s.T()
+
+	ms.CreateTopicV2("multi-part-offset", 3)
+	topic := ms.GetTopicByName("multi-part-offset")
+	require.NotNil(T, topic)
+
+	err := ms.CommitOffset("group-1", topic.ID, 0, 5, "")
+	require.NoError(T, err)
+	err = ms.CommitOffset("group-1", topic.ID, 1, 15, "")
+	require.NoError(T, err)
+	err = ms.CommitOffset("group-1", topic.ID, 2, 25, "")
+	require.NoError(T, err)
+
+	offset0, _, err := ms.FetchOffset("group-1", topic.ID, 0)
+	require.NoError(T, err)
+	assert.Equal(T, int64(5), offset0)
+
+	offset1, _, err := ms.FetchOffset("group-1", topic.ID, 1)
+	require.NoError(T, err)
+	assert.Equal(T, int64(15), offset1)
+
+	offset2, _, err := ms.FetchOffset("group-1", topic.ID, 2)
+	require.NoError(T, err)
+	assert.Equal(T, int64(25), offset2)
+}

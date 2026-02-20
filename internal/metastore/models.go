@@ -54,6 +54,15 @@ type RecordBatchEvent struct {
 	Processed  bool      `gorm:"default:false; index:idx_rbe_unprocessed_ordered"`
 }
 
+type ConsumerGroupOffset struct {
+	BaseModel
+	GroupID   string    `gorm:"size:255;not null;uniqueIndex:idx_consumer_group_offset"`
+	TopicID   uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_consumer_group_offset"`
+	Partition int32     `gorm:"not null;uniqueIndex:idx_consumer_group_offset"`
+	Offset    int64     `gorm:"type:bigint;not null"`
+	Metadata  string    `gorm:"size:255"`
+}
+
 type RecordBatchV2 struct {
 	BaseModel
 	TopicID   uuid.UUID `gorm:"type:uuid; index"`

@@ -71,6 +71,15 @@ func (m *MockMetastore) GetRecordBatchEvents(topicName string) ([]metastore.Reco
 	return args.Get(0).([]metastore.RecordBatchEvent), args.Error(1)
 }
 
+func (m *MockMetastore) CommitOffset(groupID string, topicID uuid.UUID, partition int32, offset int64, metadata string) error {
+	return m.Called(groupID, topicID, partition, offset, metadata).Error(0)
+}
+
+func (m *MockMetastore) FetchOffset(groupID string, topicID uuid.UUID, partition int32) (int64, string, error) {
+	args := m.Called(groupID, topicID, partition)
+	return args.Get(0).(int64), args.Get(1).(string), args.Error(2)
+}
+
 func TestBasicFlush(t *testing.T) {
 	mockS3 := &s3_client.MockS3Client{}
 	mockMeta := &MockMetastore{}

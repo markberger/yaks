@@ -1,10 +1,13 @@
 package metastore
 
 import (
+	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/lib/pq" // Import for pq.Array
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Metastore interface {
@@ -18,6 +21,8 @@ type Metastore interface {
 	GetRecordBatchesV2(topicName string, partition int32, startOffset int64) ([]RecordBatchV2, error)
 	GetTopicPartitions(topicName string) ([]TopicPartition, error)
 	GetRecordBatchEvents(topicName string) ([]RecordBatchEvent, error)
+	CommitOffset(groupID string, topicID uuid.UUID, partition int32, offset int64, metadata string) error
+	FetchOffset(groupID string, topicID uuid.UUID, partition int32) (int64, string, error)
 }
 
 // Struct responsible for logic between server and postgres
@@ -40,6 +45,7 @@ func (m *GormMetastore) ApplyMigrations() error {
 		&TopicPartition{},
 		&RecordBatchEvent{},
 		&RecordBatchV2{},
+		&ConsumerGroupOffset{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to apply migrations: %w", err)
@@ -357,4 +363,30 @@ func (m *GormMetastore) GetRecordBatchEvents(topicName string) ([]RecordBatchEve
 	}
 
 	return events, nil
+}
+
+func (m *GormMetastore) CommitOffset(groupID string, topicID uuid.UUID, partition int32, offset int64, metadata string) error {
+	record := ConsumerGroupOffset{
+		GroupID:   groupID,
+		TopicID:   topicID,
+		Partition: partition,
+		Offset:    offset,
+		Metadata:  metadata,
+	}
+	return m.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "group_id"}, {Name: "topic_id"}, {Name: "partition"}},
+		DoUpdates: clause.AssignmentColumns([]string{"offset", "metadata", "updated_at"}),
+	}).Create(&record).Error
+}
+
+func (m *GormMetastore) FetchOffset(groupID string, topicID uuid.UUID, partition int32) (int64, string, error) {
+	var result ConsumerGroupOffset
+	err := m.db.Where("group_id = ? AND topic_id = ? AND partition = ?", groupID, topicID, partition).First(&result).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return -1, "", nil
+	}
+	if err != nil {
+		return -1, "", err
+	}
+	return result.Offset, result.Metadata, nil
 }
