@@ -3,25 +3,23 @@ package handlers
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/markberger/yaks/internal/metastore"
 	"github.com/markberger/yaks/internal/s3_client"
-	log "github.com/sirupsen/logrus"
 	"github.com/twmb/franz-go/pkg/kmsg"
 )
 
 type FetchRequestHandler struct {
 	metastore  metastore.Metastore
-	s3Client   *s3.Client
-	bucketName *string
+	s3Client   s3_client.S3Client
+	bucketName string
 }
 
-func NewFetchRequestHandler(metastore metastore.Metastore, s3Cfg s3_client.S3ClientConfig) *FetchRequestHandler {
-	client := s3_client.CreateRawS3Client(s3Cfg)
-	bucketName := s3Cfg.Bucket
-	return &FetchRequestHandler{metastore, client, &bucketName}
+func NewFetchRequestHandler(metastore metastore.Metastore, s3Client s3_client.S3Client, bucketName string) *FetchRequestHandler {
+	return &FetchRequestHandler{metastore, s3Client, bucketName}
 }
 
 func (h *FetchRequestHandler) Key() kmsg.Key     { return kmsg.Fetch }
@@ -60,27 +58,34 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 
 	var recordBatches []byte
 	for _, metadata := range batchesMetadata {
-		// Download the object and read into memory
-		resp, err := h.s3Client.GetObject(context.Background(), &s3.GetObjectInput{
-			Bucket: h.bucketName,
-			Key:    &metadata.S3Key,
-		})
+		data, err := h.downloadBatch(metadata.S3Key)
 		if err != nil {
-			log.Fatalf("failed to GetObject, %v", err)
-		}
-		defer resp.Body.Close()
-
-		data, err := io.ReadAll(resp.Body)
-		if err != nil {
-			log.Fatalf("failed to read object body, %v", err)
+			return nil, fmt.Errorf("failed to fetch batch %s: %w", metadata.S3Key, err)
 		}
 
 		// Set RecordBatch.FirstOffset for consumer
-		binary.BigEndian.PutUint64(data, uint64((metadata.StartOffset)))
+		binary.BigEndian.PutUint64(data, uint64(metadata.StartOffset))
 		recordBatches = append(recordBatches, data...)
 	}
 	responsePartition.RecordBatches = recordBatches
 	responseTopic.Partitions = append(responseTopic.Partitions, responsePartition)
 	response.Topics = append(response.Topics, responseTopic)
 	return &response, nil
+}
+
+func (h *FetchRequestHandler) downloadBatch(key string) ([]byte, error) {
+	resp, err := h.s3Client.GetObject(context.Background(), &s3.GetObjectInput{
+		Bucket: &h.bucketName,
+		Key:    &key,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("GetObject failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read object body: %w", err)
+	}
+	return data, nil
 }

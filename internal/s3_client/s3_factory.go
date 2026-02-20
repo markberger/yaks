@@ -20,8 +20,8 @@ type S3ClientConfig struct {
 	Bucket          string `env:"YAKS_S3_BUCKET"     envDefault:"test-bucket"`
 }
 
-// CreateRawS3Client creates a raw *s3.Client from the given configuration
-func CreateRawS3Client(cfg S3ClientConfig) *s3.Client {
+// CreateS3Client creates an S3 client with the given configuration
+func CreateS3Client(cfg S3ClientConfig) S3Client {
 	ctx := context.Background()
 
 	staticCredentialsProvider := credentials.NewStaticCredentialsProvider(
@@ -38,13 +38,10 @@ func CreateRawS3Client(cfg S3ClientConfig) *s3.Client {
 		log.Fatalf("failed to load config: %v", err)
 	}
 
-	return s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(cfg.Endpoint)
 		o.UsePathStyle = cfg.UsePathStyle
 	})
-}
 
-// CreateS3Client creates an S3 client with the given configuration
-func CreateS3Client(cfg S3ClientConfig) S3Client {
-	return NewRealS3Client(CreateRawS3Client(cfg))
+	return NewRealS3Client(client)
 }

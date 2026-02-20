@@ -23,6 +23,11 @@ func (m *MockS3Client) PutObject(ctx context.Context, params *s3.PutObjectInput,
 	return args.Get(0).(*s3.PutObjectOutput), args.Error(1)
 }
 
+func (m *MockS3Client) GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	args := m.Called(ctx, params)
+	return args.Get(0).(*s3.GetObjectOutput), args.Error(1)
+}
+
 // Test helper functions
 func createValidProduceRequest(topicName string, partition int32, records []byte) *kmsg.ProduceRequest {
 	request := kmsg.NewProduceRequest()
