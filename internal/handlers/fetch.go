@@ -74,8 +74,6 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 		}
 
 		response.Topics = append(response.Topics, responseTopic)
-		// TODO: support multiple topics
-		break
 	}
 	return &response, nil
 }

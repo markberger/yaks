@@ -171,6 +171,82 @@ func (s *HandlersTestSuite) TestFetch_HighWatermark_EmptyPartition() {
 	require.Equal(s.T(), int64(0), fetchResp.Topics[0].Partitions[0].HighWatermark)
 }
 
+func (s *HandlersTestSuite) TestFetch_MultipleTopicsAndPartitions() {
+	ms := s.TestDB.InitMetastore()
+
+	// Create two topics: topicA with 2 partitions, topicB with 1 partition
+	ms.CreateTopicV2("fetch-multi-a", 2)
+	ms.CreateTopicV2("fetch-multi-b", 1)
+	topicAID := ms.GetTopicByName("fetch-multi-a").ID
+	topicBID := ms.GetTopicByName("fetch-multi-b").ID
+
+	dataA0 := fakeBatchData(16)
+	dataA1 := fakeBatchData(24)
+	dataB0 := fakeBatchData(32)
+
+	// Commit batches to different topic/partitions
+	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
+		{TopicID: topicAID, Partition: 0, NRecords: 3, S3Key: "multi/a0.batch", ByteLength: int64(len(dataA0))},
+		{TopicID: topicAID, Partition: 1, NRecords: 2, S3Key: "multi/a1.batch", ByteLength: int64(len(dataA1))},
+		{TopicID: topicBID, Partition: 0, NRecords: 4, S3Key: "multi/b0.batch", ByteLength: int64(len(dataB0))},
+	})
+
+	mockS3 := &s3_client.MockS3Client{}
+	mockS3.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
+		return *in.Key == "multi/a0.batch"
+	})).Return(mockGetObjectReturn(dataA0), nil)
+	mockS3.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
+		return *in.Key == "multi/a1.batch"
+	})).Return(mockGetObjectReturn(dataA1), nil)
+	mockS3.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
+		return *in.Key == "multi/b0.batch"
+	})).Return(mockGetObjectReturn(dataB0), nil)
+
+	// Build a fetch request with 2 topics, topicA requesting partitions 0 and 1
+	req := kmsg.NewFetchRequest()
+	req.SetVersion(3)
+	tA := kmsg.NewFetchRequestTopic()
+	tA.Topic = "fetch-multi-a"
+	pA0 := kmsg.NewFetchRequestTopicPartition()
+	pA0.Partition = 0
+	pA0.FetchOffset = 0
+	pA1 := kmsg.NewFetchRequestTopicPartition()
+	pA1.Partition = 1
+	pA1.FetchOffset = 0
+	tA.Partitions = []kmsg.FetchRequestTopicPartition{pA0, pA1}
+	tB := kmsg.NewFetchRequestTopic()
+	tB.Topic = "fetch-multi-b"
+	pB0 := kmsg.NewFetchRequestTopicPartition()
+	pB0.Partition = 0
+	pB0.FetchOffset = 0
+	tB.Partitions = []kmsg.FetchRequestTopicPartition{pB0}
+	req.Topics = []kmsg.FetchRequestTopic{tA, tB}
+
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket")
+	resp, err := handler.Handle(&req)
+
+	require.NoError(s.T(), err)
+	fetchResp := resp.(*kmsg.FetchResponse)
+	require.Len(s.T(), fetchResp.Topics, 2)
+
+	// Verify topic A
+	require.Equal(s.T(), "fetch-multi-a", fetchResp.Topics[0].Topic)
+	require.Len(s.T(), fetchResp.Topics[0].Partitions, 2)
+	require.Equal(s.T(), int32(0), fetchResp.Topics[0].Partitions[0].Partition)
+	require.Len(s.T(), fetchResp.Topics[0].Partitions[0].RecordBatches, len(dataA0))
+	require.Equal(s.T(), int64(3), fetchResp.Topics[0].Partitions[0].HighWatermark)
+	require.Equal(s.T(), int32(1), fetchResp.Topics[0].Partitions[1].Partition)
+	require.Len(s.T(), fetchResp.Topics[0].Partitions[1].RecordBatches, len(dataA1))
+	require.Equal(s.T(), int64(2), fetchResp.Topics[0].Partitions[1].HighWatermark)
+
+	// Verify topic B
+	require.Equal(s.T(), "fetch-multi-b", fetchResp.Topics[1].Topic)
+	require.Len(s.T(), fetchResp.Topics[1].Partitions, 1)
+	require.Equal(s.T(), int32(0), fetchResp.Topics[1].Partitions[0].Partition)
+	require.Len(s.T(), fetchResp.Topics[1].Partitions[0].RecordBatches, len(dataB0))
+	require.Equal(s.T(), int64(4), fetchResp.Topics[1].Partitions[0].HighWatermark)
+}
+
 func (s *HandlersTestSuite) TestFetch_S3Failure_ReturnsError() {
 	ms := s.TestDB.InitMetastore()
 	seedBatch(ms, "fetch-s3fail", 0, 5, "batches/fail.batch", 61)
