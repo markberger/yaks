@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"math"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/markberger/yaks/internal/metastore"
@@ -58,7 +59,7 @@ func (s *HandlersTestSuite) TestFetch_Success_PatchesFirstOffset() {
 	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(batchBytes), nil)
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket")
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 	resp, err := handler.Handle(createFetchRequest("fetch-test", 0, 0))
 
 	require.NoError(s.T(), err)
@@ -88,7 +89,7 @@ func (s *HandlersTestSuite) TestFetch_OffsetPastAllBatches_EmptyResponse() {
 	mockS3 := &s3_client.MockS3Client{}
 	// No GetObject calls expected
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket")
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 	resp, err := handler.Handle(createFetchRequest("fetch-empty", 0, 9999))
 
 	require.NoError(s.T(), err)
@@ -121,7 +122,7 @@ func (s *HandlersTestSuite) TestFetch_MultipleBatches_Concatenated() {
 		return *in.Key == "batch/b.batch"
 	})).Return(mockGetObjectReturn(dataB), nil)
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket")
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 	resp, err := handler.Handle(createFetchRequest("fetch-multi", 0, 0))
 
 	require.NoError(s.T(), err)
@@ -147,7 +148,7 @@ func (s *HandlersTestSuite) TestFetch_HighWatermark_ReflectsEndOffset() {
 	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(batchBytes), nil)
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket")
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 	resp, err := handler.Handle(createFetchRequest("fetch-hwm", 0, 0))
 
 	require.NoError(s.T(), err)
@@ -162,7 +163,7 @@ func (s *HandlersTestSuite) TestFetch_HighWatermark_EmptyPartition() {
 
 	mockS3 := &s3_client.MockS3Client{}
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket")
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 	resp, err := handler.Handle(createFetchRequest("fetch-hwm-empty", 0, 0))
 
 	require.NoError(s.T(), err)
@@ -222,7 +223,7 @@ func (s *HandlersTestSuite) TestFetch_MultipleTopicsAndPartitions() {
 	tB.Partitions = []kmsg.FetchRequestTopicPartition{pB0}
 	req.Topics = []kmsg.FetchRequestTopic{tA, tB}
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket")
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 	resp, err := handler.Handle(&req)
 
 	require.NoError(s.T(), err)
@@ -256,9 +257,179 @@ func (s *HandlersTestSuite) TestFetch_S3Failure_ReturnsError() {
 		(*s3.GetObjectOutput)(nil), errors.New("connection refused"),
 	)
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket")
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 	_, err := handler.Handle(createFetchRequest("fetch-s3fail", 0, 0))
 
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "connection refused")
 }
+
+// --- Size limit tests ---
+
+func (s *HandlersTestSuite) TestFetch_PartitionMaxBytes_LimitsBatches() {
+	ms := s.TestDB.InitMetastore()
+	ms.CreateTopicV2("fetch-plimit", 1)
+	topicID := ms.GetTopicByName("fetch-plimit").ID
+
+	// 3 batches of 16 bytes each
+	data := fakeBatchData(16)
+	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
+		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "plimit/1.batch", ByteLength: 16},
+	})
+	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
+		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "plimit/2.batch", ByteLength: 16},
+	})
+	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
+		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "plimit/3.batch", ByteLength: 16},
+	})
+
+	mockS3 := &s3_client.MockS3Client{}
+	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(data), nil)
+
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
+
+	// PartitionMaxBytes=30 → first batch (16) always included, second (16+16=32) exceeds 30
+	req := kmsg.NewFetchRequest()
+	req.SetVersion(3)
+	req.MaxBytes = math.MaxInt32
+	t := kmsg.NewFetchRequestTopic()
+	t.Topic = "fetch-plimit"
+	p := kmsg.NewFetchRequestTopicPartition()
+	p.Partition = 0
+	p.FetchOffset = 0
+	p.PartitionMaxBytes = 30
+	t.Partitions = []kmsg.FetchRequestTopicPartition{p}
+	req.Topics = []kmsg.FetchRequestTopic{t}
+
+	resp, err := handler.Handle(&req)
+	require.NoError(s.T(), err)
+	records := resp.(*kmsg.FetchResponse).Topics[0].Partitions[0].RecordBatches
+	require.Len(s.T(), records, 16) // only first batch
+}
+
+func (s *HandlersTestSuite) TestFetch_ServerMaxBytes_OverridesClient() {
+	ms := s.TestDB.InitMetastore()
+	ms.CreateTopicV2("fetch-srvlimit", 1)
+	topicID := ms.GetTopicByName("fetch-srvlimit").ID
+
+	// 3 batches of 20 bytes each
+	data := fakeBatchData(20)
+	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
+		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "srv/1.batch", ByteLength: 20},
+	})
+	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
+		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "srv/2.batch", ByteLength: 20},
+	})
+	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
+		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "srv/3.batch", ByteLength: 20},
+	})
+
+	mockS3 := &s3_client.MockS3Client{}
+	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(data), nil)
+
+	// Server max=30, client max=1000 → effective=30
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", 30)
+
+	req := createFetchRequest("fetch-srvlimit", 0, 0)
+	req.MaxBytes = 1000
+
+	resp, err := handler.Handle(req)
+	require.NoError(s.T(), err)
+	records := resp.(*kmsg.FetchResponse).Topics[0].Partitions[0].RecordBatches
+	// First batch (20) always included, second (20+20=40) exceeds 30
+	require.Len(s.T(), records, 20)
+
+	// Verify only 1 S3 call was made, not 3
+	mockS3.AssertNumberOfCalls(s.T(), "GetObject", 1)
+}
+
+func (s *HandlersTestSuite) TestFetch_FirstBatchAlwaysIncluded() {
+	ms := s.TestDB.InitMetastore()
+	batchBytes := fakeBatchData(100)
+	seedBatch(ms, "fetch-forward", 0, 1, "forward/big.batch", 100)
+
+	mockS3 := &s3_client.MockS3Client{}
+	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(batchBytes), nil)
+
+	// All limits set to 10, but the single 100-byte batch must still be returned
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", 10)
+
+	req := kmsg.NewFetchRequest()
+	req.SetVersion(3)
+	req.MaxBytes = 10
+	t := kmsg.NewFetchRequestTopic()
+	t.Topic = "fetch-forward"
+	p := kmsg.NewFetchRequestTopicPartition()
+	p.Partition = 0
+	p.FetchOffset = 0
+	p.PartitionMaxBytes = 10
+	t.Partitions = []kmsg.FetchRequestTopicPartition{p}
+	req.Topics = []kmsg.FetchRequestTopic{t}
+
+	resp, err := handler.Handle(&req)
+	require.NoError(s.T(), err)
+	records := resp.(*kmsg.FetchResponse).Topics[0].Partitions[0].RecordBatches
+	require.Len(s.T(), records, 100)
+}
+
+func (s *HandlersTestSuite) TestFetch_MaxBytes_CumulativeAcrossPartitions() {
+	ms := s.TestDB.InitMetastore()
+	ms.CreateTopicV2("fetch-cumul", 2)
+	topicID := ms.GetTopicByName("fetch-cumul").ID
+
+	dataP0 := fakeBatchData(30)
+	dataP1a := fakeBatchData(20)
+	dataP1b := fakeBatchData(20)
+
+	// Partition 0: one 30-byte batch
+	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
+		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "cumul/p0.batch", ByteLength: 30},
+	})
+	// Partition 1: two 20-byte batches
+	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
+		{TopicID: topicID, Partition: 1, NRecords: 1, S3Key: "cumul/p1a.batch", ByteLength: 20},
+	})
+	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
+		{TopicID: topicID, Partition: 1, NRecords: 1, S3Key: "cumul/p1b.batch", ByteLength: 20},
+	})
+
+	mockS3 := &s3_client.MockS3Client{}
+	mockS3.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
+		return *in.Key == "cumul/p0.batch"
+	})).Return(mockGetObjectReturn(dataP0), nil)
+	mockS3.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
+		return *in.Key == "cumul/p1a.batch"
+	})).Return(mockGetObjectReturn(dataP1a), nil)
+	mockS3.On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool {
+		return *in.Key == "cumul/p1b.batch"
+	})).Return(mockGetObjectReturn(dataP1b), nil)
+
+	// MaxBytes=55: partition 0 uses 30, partition 1 gets 25 remaining budget
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
+
+	req := kmsg.NewFetchRequest()
+	req.SetVersion(3)
+	req.MaxBytes = 55
+	t := kmsg.NewFetchRequestTopic()
+	t.Topic = "fetch-cumul"
+	p0 := kmsg.NewFetchRequestTopicPartition()
+	p0.Partition = 0
+	p0.FetchOffset = 0
+	p0.PartitionMaxBytes = math.MaxInt32
+	p1 := kmsg.NewFetchRequestTopicPartition()
+	p1.Partition = 1
+	p1.FetchOffset = 0
+	p1.PartitionMaxBytes = math.MaxInt32
+	t.Partitions = []kmsg.FetchRequestTopicPartition{p0, p1}
+	req.Topics = []kmsg.FetchRequestTopic{t}
+
+	resp, err := handler.Handle(&req)
+	require.NoError(s.T(), err)
+	fetchResp := resp.(*kmsg.FetchResponse)
+
+	// Partition 0: 30 bytes (first batch always included)
+	require.Len(s.T(), fetchResp.Topics[0].Partitions[0].RecordBatches, 30)
+	// Partition 1: first batch (20) always included, second (20+20=40) would push total to 70 > 55
+	require.Len(s.T(), fetchResp.Topics[0].Partitions[1].RecordBatches, 20)
+}
+

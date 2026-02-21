@@ -101,6 +101,7 @@ func (s *IntegrationTestsSuite) NewAgent() *agent.Agent {
 		FlushBytes:            5242880,
 		MaterializeIntervalMs: 100,
 		MaterializeBatchSize:  1000,
+		FetchMaxBytes:         52428800,
 		S3: s3_client.S3ClientConfig{
 			Endpoint:        "http://localhost:4566",
 			Region:          "us-east-1",

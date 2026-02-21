@@ -16,6 +16,8 @@ type Config struct {
 	MaterializeIntervalMs int   `env:"YAKS_MATERIALIZE_INTERVAL_MS" envDefault:"100"`
 	MaterializeBatchSize  int32 `env:"YAKS_MATERIALIZE_BATCH_SIZE"  envDefault:"1000"`
 
+	FetchMaxBytes int32 `env:"YAKS_FETCH_MAX_BYTES" envDefault:"52428800"`
+
 	DB metastore.Config         `envPrefix:""`
 	S3 s3_client.S3ClientConfig `envPrefix:""`
 }

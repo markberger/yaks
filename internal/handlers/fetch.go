@@ -16,10 +16,11 @@ type FetchRequestHandler struct {
 	metastore  metastore.Metastore
 	s3Client   s3_client.S3Client
 	bucketName string
+	maxBytes   int32
 }
 
-func NewFetchRequestHandler(metastore metastore.Metastore, s3Client s3_client.S3Client, bucketName string) *FetchRequestHandler {
-	return &FetchRequestHandler{metastore, s3Client, bucketName}
+func NewFetchRequestHandler(metastore metastore.Metastore, s3Client s3_client.S3Client, bucketName string, maxBytes int32) *FetchRequestHandler {
+	return &FetchRequestHandler{metastore, s3Client, bucketName, maxBytes}
 }
 
 func (h *FetchRequestHandler) Key() kmsg.Key     { return kmsg.Fetch }
@@ -32,7 +33,13 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	response.SetVersion(request.GetVersion())
 	response.ThrottleMillis = 0
 
-	// TODO: respect byte size cutoff when returning responses
+	effectiveMaxBytes := h.maxBytes
+	if request.MaxBytes > 0 && request.MaxBytes < effectiveMaxBytes {
+		effectiveMaxBytes = request.MaxBytes
+	}
+
+	var totalResponseBytes int32
+
 	for _, t := range request.Topics {
 		responseTopic := kmsg.NewFetchResponseTopic()
 		responseTopic.Topic = t.Topic
@@ -58,8 +65,25 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 			responsePartition.ErrorCode = 0
 			responsePartition.HighWatermark = hwmMap[p.Partition]
 
+			remainingBudget := effectiveMaxBytes - totalResponseBytes
+			partitionLimit := remainingBudget
+			if p.PartitionMaxBytes > 0 && p.PartitionMaxBytes < partitionLimit {
+				partitionLimit = p.PartitionMaxBytes
+			}
+
 			var recordBatches []byte
-			for _, metadata := range batchesMetadata {
+			var partitionBytes int32
+			for i, metadata := range batchesMetadata {
+				batchSize := int32(metadata.ByteLength)
+				if i > 0 {
+					if partitionBytes+batchSize > partitionLimit {
+						break
+					}
+					if totalResponseBytes+partitionBytes+batchSize > effectiveMaxBytes {
+						break
+					}
+				}
+
 				data, err := h.downloadBatch(metadata.S3Key, metadata.ByteOffset, metadata.ByteLength)
 				if err != nil {
 					return nil, fmt.Errorf("failed to fetch batch %s: %w", metadata.S3Key, err)
@@ -68,7 +92,10 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 				// Set RecordBatch.FirstOffset for consumer
 				binary.BigEndian.PutUint64(data, uint64(metadata.StartOffset))
 				recordBatches = append(recordBatches, data...)
+				partitionBytes += batchSize
 			}
+
+			totalResponseBytes += partitionBytes
 			responsePartition.RecordBatches = recordBatches
 			responseTopic.Partitions = append(responseTopic.Partitions, responsePartition)
 		}

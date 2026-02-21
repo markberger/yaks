@@ -15,13 +15,14 @@ import (
 )
 
 type Agent struct {
-	db           *gorm.DB
-	Metastore    metastore.Metastore
-	broker       *broker.Broker
-	s3Client     s3_client.S3Client
-	bucket       string
-	buffer       *buffer.WriteBuffer
-	materializer *materializer.Materializer
+	db            *gorm.DB
+	Metastore     metastore.Metastore
+	broker        *broker.Broker
+	s3Client      s3_client.S3Client
+	bucket        string
+	fetchMaxBytes int32
+	buffer        *buffer.WriteBuffer
+	materializer  *materializer.Materializer
 }
 
 func NewAgent(db *gorm.DB, cfg config.Config) *Agent {
@@ -40,7 +41,7 @@ func NewAgent(db *gorm.DB, cfg config.Config) *Agent {
 		time.Duration(cfg.MaterializeIntervalMs)*time.Millisecond,
 		cfg.MaterializeBatchSize,
 	)
-	return &Agent{db, metastore, broker, s3Client, cfg.S3.Bucket, buf, mat}
+	return &Agent{db, metastore, broker, s3Client, cfg.S3.Bucket, cfg.FetchMaxBytes, buf, mat}
 }
 
 // TODO: agent should not apply migrations it should be done by a separate
@@ -53,7 +54,7 @@ func (a *Agent) AddHandlers() {
 	a.broker.Add(handlers.NewMetadataRequestHandler(a.broker, a.Metastore))
 	a.broker.Add(handlers.NewCreateTopicsRequestHandler(a.Metastore))
 	a.broker.Add(handlers.NewProduceRequestHandler(a.Metastore, a.buffer))
-	a.broker.Add(handlers.NewFetchRequestHandler(a.Metastore, a.s3Client, a.bucket))
+	a.broker.Add(handlers.NewFetchRequestHandler(a.Metastore, a.s3Client, a.bucket, a.fetchMaxBytes))
 	a.broker.Add(handlers.NewFindCoordinatorRequestHandler(a.broker))
 	a.broker.Add(handlers.NewOffsetCommitRequestHandler(a.Metastore))
 	a.broker.Add(handlers.NewOffsetFetchRequestHandler(a.Metastore))
