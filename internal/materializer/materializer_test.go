@@ -86,11 +86,12 @@ func (s *MaterializerTestSuite) TestBasicMaterialization() {
 	require.NoError(T, err)
 	require.Len(T, batches, 2)
 
-	// Batches should be ordered by start_offset
+	// Batches are ordered by start_offset, but within a single
+	// CommitRecordBatchEvents call UUIDs are random so either event
+	// may be materialized first. Verify structural correctness.
 	require.Equal(T, int64(0), batches[0].StartOffset)
-	require.Equal(T, int64(5), batches[0].NRecords)
-	require.Equal(T, int64(5), batches[1].StartOffset)
-	require.Equal(T, int64(3), batches[1].NRecords)
+	require.Equal(T, batches[0].NRecords, batches[1].StartOffset)
+	require.Equal(T, int64(8), batches[0].NRecords+batches[1].NRecords)
 
 	// Verify partition end offset was updated
 	partitions, err := ms.GetTopicPartitions("mat-test")

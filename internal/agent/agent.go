@@ -58,6 +58,7 @@ func (a *Agent) AddHandlers() {
 	a.broker.Add(handlers.NewFindCoordinatorRequestHandler(a.broker))
 	a.broker.Add(handlers.NewOffsetCommitRequestHandler(a.Metastore))
 	a.broker.Add(handlers.NewOffsetFetchRequestHandler(a.Metastore))
+	a.broker.Add(handlers.NewListOffsetsRequestHandler(a.Metastore))
 }
 
 func (a *Agent) ListenAndServe(ctx context.Context) {
