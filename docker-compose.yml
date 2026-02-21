@@ -10,6 +10,11 @@ services:
       - "5432:5432"
     tmpfs:
       - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d testdb"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
 
   localstack:
     container_name: "${LOCALSTACK_DOCKER_NAME:-localstack-main}"
@@ -23,4 +28,71 @@ services:
     volumes:
       - "${LOCALSTACK_VOLUME_DIR:-./.localstack-volume}:/var/lib/localstack"
       - "/var/run/docker.sock:/var/run/docker.sock"
-      - "./integration/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh"
+      - "./docker/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh"
+
+  agent1:
+    profiles: ["multi-agent"]
+    build:
+      dockerfile: docker/Dockerfile
+    environment:
+      YAKS_BROKER_HOST: "0.0.0.0"
+      YAKS_BROKER_PORT: "9092"
+      YAKS_ADVERTISED_HOST: "localhost"
+      YAKS_ADVERTISED_PORT: "9092"
+      YAKS_RUN_MIGRATIONS: "true"
+      YAKS_DB_HOST: postgres
+      YAKS_DB_PORT: "5432"
+      YAKS_DB_USER: testuser
+      YAKS_DB_PASSWORD: testpassword
+      YAKS_DB_NAME: testdb
+      YAKS_DB_SSLMODE: disable
+      YAKS_S3_ENDPOINT: "http://localstack:4566"
+      YAKS_S3_REGION: us-east-1
+      YAKS_S3_ACCESS_KEY: test
+      YAKS_S3_SECRET_KEY: test
+      YAKS_S3_BUCKET: test-bucket
+      YAKS_S3_PATH_STYLE: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+  agent2:
+    profiles: ["multi-agent"]
+    build:
+      dockerfile: docker/Dockerfile
+    environment:
+      YAKS_BROKER_HOST: "0.0.0.0"
+      YAKS_BROKER_PORT: "9092"
+      YAKS_ADVERTISED_HOST: "localhost"
+      YAKS_ADVERTISED_PORT: "9092"
+      YAKS_RUN_MIGRATIONS: "false"
+      YAKS_DB_HOST: postgres
+      YAKS_DB_PORT: "5432"
+      YAKS_DB_USER: testuser
+      YAKS_DB_PASSWORD: testpassword
+      YAKS_DB_NAME: testdb
+      YAKS_DB_SSLMODE: disable
+      YAKS_S3_ENDPOINT: "http://localstack:4566"
+      YAKS_S3_REGION: us-east-1
+      YAKS_S3_ACCESS_KEY: test
+      YAKS_S3_SECRET_KEY: test
+      YAKS_S3_BUCKET: test-bucket
+      YAKS_S3_PATH_STYLE: "true"
+    depends_on:
+      agent1:
+        condition: service_started
+
+  nginx:
+    profiles: ["multi-agent"]
+    image: nginx:alpine
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "9092:9092"
+    depends_on:
+      agent1:
+        condition: service_started
+      agent2:
+        condition: service_started

@@ -33,7 +33,7 @@ func (s *IntegrationTestsSuite) SetupSuite() {
 	s.TestDB = metastore.NewTestDB()
 
 	// Get init script path to create test-bucket
-	scriptPath, err := filepath.Abs("init-aws.sh")
+	scriptPath, err := filepath.Abs("../docker/init-aws.sh")
 	if err != nil {
 		log.Fatalf("failed to get absolute path for init script: %v", err)
 	}
