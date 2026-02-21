@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"os/exec"
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -28,6 +29,12 @@ type TestDB struct {
 
 // NewTestDB creates a new PostgreSQL container and returns a configured test database
 func NewTestDB() *TestDB {
+	// Pre-check that Docker is available. testcontainers will panic with a
+	// long stack trace otherwise.
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		log.Fatalf("Docker is not running. Tests require Docker for test containers. Please start Docker and try again.")
+	}
+
 	ctx := context.Background()
 
 	// Start PostgreSQL container
