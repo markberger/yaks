@@ -17,11 +17,20 @@ type Broker struct {
 	NodeID          int32
 	Host            string
 	Port            int32
+	AdvertisedHost  string
+	AdvertisedPort  int32
 	handlerRegistry *handlerRegistry
 }
 
-func NewBroker(nodeID int32, host string, port int32) *Broker {
-	b := Broker{nodeID, host, port, NewHandlerRegistry()}
+func NewBroker(nodeID int32, host string, port int32, advertisedHost string, advertisedPort int32) *Broker {
+	b := Broker{
+		NodeID:          nodeID,
+		Host:            host,
+		Port:            port,
+		AdvertisedHost:  advertisedHost,
+		AdvertisedPort:  advertisedPort,
+		handlerRegistry: NewHandlerRegistry(),
+	}
 	b.Add(NewApiVersionsRequestHandler(b.handlerRegistry))
 	return &b
 }

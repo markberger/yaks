@@ -18,7 +18,7 @@ func TestApiVersionsHandler(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}()
 
-	broker := NewBroker(0, "localhost", 9092)
+	broker := NewBroker(0, "localhost", 9092, "localhost", 9092)
 	broker.Add(NewApiVersionsRequestHandler(broker.handlerRegistry))
 	go broker.ListenAndServe(ctx)
 	time.Sleep(500 * time.Millisecond)
@@ -58,7 +58,7 @@ func TestConfluentMetadataRequest(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}()
 
-	broker := NewBroker(0, "localhost", 9092)
+	broker := NewBroker(0, "localhost", 9092, "localhost", 9092)
 	broker.Add(NewApiVersionsRequestHandler(broker.handlerRegistry))
 	broker.Add(NewMockMetadataRequestHandler(broker))
 	go broker.ListenAndServe(ctx)
@@ -140,8 +140,8 @@ func (h MockMetadataRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error
 	response.ThrottleMillis = 0
 	response.Brokers = append(response.Brokers, kmsg.MetadataResponseBroker{
 		NodeID: h.broker.NodeID,
-		Host:   h.broker.Host,
-		Port:   h.broker.Port,
+		Host:   h.broker.AdvertisedHost,
+		Port:   h.broker.AdvertisedPort,
 	})
 	response.ClusterID = kmsg.StringPtr("cluster id")
 	response.ControllerID = 0

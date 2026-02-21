@@ -25,8 +25,8 @@ func (h *FindCoordinatorRequestHandler) Handle(r kmsg.Request) (kmsg.Response, e
 		response.ThrottleMillis = 0
 	}
 	response.NodeID = h.broker.NodeID
-	response.Host = h.broker.Host
-	response.Port = h.broker.Port
+	response.Host = h.broker.AdvertisedHost
+	response.Port = h.broker.AdvertisedPort
 
 	return &response, nil
 }

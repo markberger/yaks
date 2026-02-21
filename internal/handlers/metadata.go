@@ -24,8 +24,8 @@ func (h *MetadataRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	response.ThrottleMillis = 0
 	broker := kmsg.MetadataResponseBroker{
 		NodeID: h.broker.NodeID,
-		Host:   h.broker.Host,
-		Port:   h.broker.Port,
+		Host:   h.broker.AdvertisedHost,
+		Port:   h.broker.AdvertisedPort,
 		Rack:   nil,
 	}
 	response.Brokers = append(response.Brokers, broker)

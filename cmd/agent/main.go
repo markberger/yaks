@@ -24,9 +24,11 @@ func main() {
 
 	// TODO: move migrator to separate cmd
 	agent := agent.NewAgent(db, cfg)
-	err = agent.ApplyMigrations()
-	if err != nil {
-		log.Fatalf("failed to apply db migrations: %v", err)
+	if cfg.RunMigrations {
+		err = agent.ApplyMigrations()
+		if err != nil {
+			log.Fatalf("failed to apply db migrations: %v", err)
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)

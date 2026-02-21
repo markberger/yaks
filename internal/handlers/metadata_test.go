@@ -11,7 +11,7 @@ import (
 
 func newMetadataHandler(s *HandlersTestSuite) (*MetadataRequestHandler, *broker.Broker) {
 	metastore := s.TestDB.InitMetastore()
-	b := broker.NewBroker(1, "localhost", 9092)
+	b := broker.NewBroker(1, "localhost", 9092, "localhost", 9092)
 	return NewMetadataRequestHandler(b, metastore), b
 }
 
@@ -158,8 +158,8 @@ func (s *HandlersTestSuite) TestMetadataBrokerInfo() {
 
 	require.Len(s.T(), response.Brokers, 1)
 	assert.Equal(s.T(), b.NodeID, response.Brokers[0].NodeID)
-	assert.Equal(s.T(), b.Host, response.Brokers[0].Host)
-	assert.Equal(s.T(), b.Port, response.Brokers[0].Port)
+	assert.Equal(s.T(), b.AdvertisedHost, response.Brokers[0].Host)
+	assert.Equal(s.T(), b.AdvertisedPort, response.Brokers[0].Port)
 	assert.Equal(s.T(), int32(0), response.ControllerID)
 }
 

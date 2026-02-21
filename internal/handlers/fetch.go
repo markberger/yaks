@@ -25,7 +25,7 @@ func NewFetchRequestHandler(metastore metastore.Metastore, s3Client s3_client.S3
 
 func (h *FetchRequestHandler) Key() kmsg.Key     { return kmsg.Fetch }
 func (h *FetchRequestHandler) MinVersion() int16 { return 3 }
-func (h *FetchRequestHandler) MaxVersion() int16 { return 3 }
+func (h *FetchRequestHandler) MaxVersion() int16 { return 4 }
 func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	request := r.(*kmsg.FetchRequest)
 
@@ -64,6 +64,7 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 			responsePartition.Partition = p.Partition
 			responsePartition.ErrorCode = 0
 			responsePartition.HighWatermark = hwmMap[p.Partition]
+			responsePartition.LastStableOffset = hwmMap[p.Partition]
 
 			remainingBudget := effectiveMaxBytes - totalResponseBytes
 			partitionLimit := remainingBudget

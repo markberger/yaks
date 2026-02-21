@@ -29,7 +29,7 @@ type Agent struct {
 
 func NewAgent(db *gorm.DB, cfg config.Config) *Agent {
 	metastore := metastore.NewGormMetastore(db)
-	broker := broker.NewBroker(0, cfg.BrokerHost, cfg.BrokerPort)
+	broker := broker.NewBroker(0, cfg.BrokerHost, cfg.BrokerPort, cfg.AdvertisedHost, cfg.GetAdvertisedPort())
 	s3Client := s3_client.CreateS3Client(cfg.S3)
 	buf := buffer.NewWriteBuffer(
 		s3Client,

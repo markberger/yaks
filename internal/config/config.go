@@ -7,8 +7,11 @@ import (
 )
 
 type Config struct {
-	BrokerHost string `env:"YAKS_BROKER_HOST" envDefault:"0.0.0.0"`
-	BrokerPort int32  `env:"YAKS_BROKER_PORT" envDefault:"9092"`
+	BrokerHost     string `env:"YAKS_BROKER_HOST"      envDefault:"0.0.0.0"`
+	BrokerPort     int32  `env:"YAKS_BROKER_PORT"      envDefault:"9092"`
+	AdvertisedHost string `env:"YAKS_ADVERTISED_HOST"  envDefault:"localhost"`
+	AdvertisedPort int32  `env:"YAKS_ADVERTISED_PORT"  envDefault:"0"`
+	RunMigrations  bool   `env:"YAKS_RUN_MIGRATIONS"   envDefault:"false"`
 
 	FlushIntervalMs int `env:"YAKS_FLUSH_INTERVAL_MS" envDefault:"250"`
 	FlushBytes      int `env:"YAKS_FLUSH_BYTES"        envDefault:"5242880"`
@@ -20,6 +23,14 @@ type Config struct {
 
 	DB metastore.Config         `envPrefix:""`
 	S3 s3_client.S3ClientConfig `envPrefix:""`
+}
+
+// GetAdvertisedPort returns AdvertisedPort if set, otherwise BrokerPort.
+func (c Config) GetAdvertisedPort() int32 {
+	if c.AdvertisedPort != 0 {
+		return c.AdvertisedPort
+	}
+	return c.BrokerPort
 }
 
 func Load() (Config, error) {

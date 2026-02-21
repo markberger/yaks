@@ -13,6 +13,9 @@ func TestLoadDefaults(t *testing.T) {
 
 	assert.Equal(t, "0.0.0.0", cfg.BrokerHost)
 	assert.Equal(t, int32(9092), cfg.BrokerPort)
+	assert.Equal(t, "localhost", cfg.AdvertisedHost)
+	assert.Equal(t, int32(0), cfg.AdvertisedPort)
+	assert.Equal(t, int32(9092), cfg.GetAdvertisedPort())
 
 	assert.Equal(t, "localhost", cfg.DB.Host)
 	assert.Equal(t, 5432, cfg.DB.Port)
@@ -32,6 +35,8 @@ func TestLoadDefaults(t *testing.T) {
 func TestLoadEnvOverrides(t *testing.T) {
 	t.Setenv("YAKS_BROKER_HOST", "10.0.0.1")
 	t.Setenv("YAKS_BROKER_PORT", "19092")
+	t.Setenv("YAKS_ADVERTISED_HOST", "public.example.com")
+	t.Setenv("YAKS_ADVERTISED_PORT", "19092")
 	t.Setenv("YAKS_DB_HOST", "db.prod")
 	t.Setenv("YAKS_DB_PORT", "5433")
 	t.Setenv("YAKS_S3_BUCKET", "prod-bucket")
@@ -42,6 +47,9 @@ func TestLoadEnvOverrides(t *testing.T) {
 
 	assert.Equal(t, "10.0.0.1", cfg.BrokerHost)
 	assert.Equal(t, int32(19092), cfg.BrokerPort)
+	assert.Equal(t, "public.example.com", cfg.AdvertisedHost)
+	assert.Equal(t, int32(19092), cfg.AdvertisedPort)
+	assert.Equal(t, int32(19092), cfg.GetAdvertisedPort())
 	assert.Equal(t, "db.prod", cfg.DB.Host)
 	assert.Equal(t, 5433, cfg.DB.Port)
 	assert.Equal(t, "prod-bucket", cfg.S3.Bucket)

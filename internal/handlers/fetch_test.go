@@ -15,6 +15,19 @@ import (
 	"github.com/twmb/franz-go/pkg/kmsg"
 )
 
+func createFetchRequestV4(topic string, partition int32, offset int64) *kmsg.FetchRequest {
+	req := kmsg.NewFetchRequest()
+	req.SetVersion(4)
+	t := kmsg.NewFetchRequestTopic()
+	t.Topic = topic
+	p := kmsg.NewFetchRequestTopicPartition()
+	p.Partition = partition
+	p.FetchOffset = offset
+	t.Partitions = []kmsg.FetchRequestTopicPartition{p}
+	req.Topics = []kmsg.FetchRequestTopic{t}
+	return &req
+}
+
 func createFetchRequest(topic string, partition int32, offset int64) *kmsg.FetchRequest {
 	req := kmsg.NewFetchRequest()
 	req.SetVersion(3)
@@ -431,5 +444,28 @@ func (s *HandlersTestSuite) TestFetch_MaxBytes_CumulativeAcrossPartitions() {
 	require.Len(s.T(), fetchResp.Topics[0].Partitions[0].RecordBatches, 30)
 	// Partition 1: first batch (20) always included, second (20+20=40) would push total to 70 > 55
 	require.Len(s.T(), fetchResp.Topics[0].Partitions[1].RecordBatches, 20)
+}
+
+func (s *HandlersTestSuite) TestFetch_V4_LastStableOffset() {
+	ms := s.TestDB.InitMetastore()
+	batchBytes := fakeBatchData(61)
+	seedBatch(ms, "fetch-v4", 0, 5, "batches/v4.batch", int64(len(batchBytes)))
+
+	mockS3 := &s3_client.MockS3Client{}
+	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(batchBytes), nil)
+
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
+	resp, err := handler.Handle(createFetchRequestV4("fetch-v4", 0, 0))
+
+	require.NoError(s.T(), err)
+	fetchResp := resp.(*kmsg.FetchResponse)
+	require.Len(s.T(), fetchResp.Topics, 1)
+	require.Len(s.T(), fetchResp.Topics[0].Partitions, 1)
+
+	partition := fetchResp.Topics[0].Partitions[0]
+	require.Equal(s.T(), int64(5), partition.HighWatermark)
+	require.Equal(s.T(), int64(5), partition.LastStableOffset)
+	require.Empty(s.T(), partition.AbortedTransactions)
+	require.Len(s.T(), partition.RecordBatches, len(batchBytes))
 }
 
