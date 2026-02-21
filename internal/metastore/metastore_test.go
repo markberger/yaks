@@ -57,7 +57,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_Basic() {
 	require.NoError(T, err)
 
 	// Execute: Call MaterializeRecordBatchEvents
-	err = metastore.MaterializeRecordBatchEvents(50)
+	_, err = metastore.MaterializeRecordBatchEvents(50)
 	require.NoError(T, err)
 
 	// Verify: Check that RecordBatchV2 records were created
@@ -157,7 +157,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_ByteFieldsPropagat
 	err = metastore.CommitRecordBatchEvents(events)
 	require.NoError(T, err)
 
-	err = metastore.MaterializeRecordBatchEvents(50)
+	_, err = metastore.MaterializeRecordBatchEvents(50)
 	require.NoError(T, err)
 
 	// Verify byte fields are carried through to RecordBatchV2
@@ -256,7 +256,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionOffs
 	require.NoError(T, err)
 
 	// Execute: Call MaterializeRecordBatchEvents
-	err = metastore.MaterializeRecordBatchEvents(50)
+	_, err = metastore.MaterializeRecordBatchEvents(50)
 	require.NoError(T, err)
 
 	// Verify: Check RecordBatchV2 records for partition 0
@@ -345,7 +345,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionWith
 	require.NoError(T, err)
 
 	// Materialize the initial events to set partition end_offset to 8
-	err = metastore.MaterializeRecordBatchEvents(50)
+	_, err = metastore.MaterializeRecordBatchEvents(50)
 	require.NoError(T, err)
 
 	// Verify initial state: partition should have end_offset = 8
@@ -376,7 +376,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionWith
 	require.NoError(T, err)
 
 	// Execute: Materialize the new events
-	err = metastore.MaterializeRecordBatchEvents(50)
+	_, err = metastore.MaterializeRecordBatchEvents(50)
 	require.NoError(T, err)
 
 	// Verify: Check that new RecordBatchV2 records continue from existing offset
@@ -487,7 +487,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_WindowFunctionOrde
 	require.NoError(T, err)
 
 	// Execute: Call MaterializeRecordBatchEvents
-	err = metastore.MaterializeRecordBatchEvents(50)
+	_, err = metastore.MaterializeRecordBatchEvents(50)
 	require.NoError(T, err)
 
 	// Verify: Check that RecordBatchV2 records were created with offsets based on ID order
@@ -608,7 +608,7 @@ func (s *MetastoreTestSuite) TestMaterializeRecordBatchEvents_BatchLimit() {
 	require.NoError(T, err)
 
 	// Execute: Call MaterializeRecordBatchEvents with limit of 1
-	err = metastore.MaterializeRecordBatchEvents(1)
+	_, err = metastore.MaterializeRecordBatchEvents(1)
 	require.NoError(T, err)
 
 	// Verify: Check that exactly 1 event is processed and 1 remains unprocessed

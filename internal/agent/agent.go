@@ -8,18 +8,20 @@ import (
 	"github.com/markberger/yaks/internal/buffer"
 	"github.com/markberger/yaks/internal/config"
 	"github.com/markberger/yaks/internal/handlers"
+	"github.com/markberger/yaks/internal/materializer"
 	"github.com/markberger/yaks/internal/metastore"
 	"github.com/markberger/yaks/internal/s3_client"
 	"gorm.io/gorm"
 )
 
 type Agent struct {
-	db        *gorm.DB
-	Metastore metastore.Metastore
-	broker    *broker.Broker
-	s3Client  s3_client.S3Client
-	bucket    string
-	buffer    *buffer.WriteBuffer
+	db           *gorm.DB
+	Metastore    metastore.Metastore
+	broker       *broker.Broker
+	s3Client     s3_client.S3Client
+	bucket       string
+	buffer       *buffer.WriteBuffer
+	materializer *materializer.Materializer
 }
 
 func NewAgent(db *gorm.DB, cfg config.Config) *Agent {
@@ -33,7 +35,12 @@ func NewAgent(db *gorm.DB, cfg config.Config) *Agent {
 		time.Duration(cfg.FlushIntervalMs)*time.Millisecond,
 		cfg.FlushBytes,
 	)
-	return &Agent{db, metastore, broker, s3Client, cfg.S3.Bucket, buf}
+	mat := materializer.NewMaterializer(
+		metastore,
+		time.Duration(cfg.MaterializeIntervalMs)*time.Millisecond,
+		cfg.MaterializeBatchSize,
+	)
+	return &Agent{db, metastore, broker, s3Client, cfg.S3.Bucket, buf, mat}
 }
 
 // TODO: agent should not apply migrations it should be done by a separate
@@ -54,5 +61,6 @@ func (a *Agent) AddHandlers() {
 
 func (a *Agent) ListenAndServe(ctx context.Context) {
 	go a.buffer.Start(ctx)
+	go a.materializer.Start(ctx)
 	a.broker.ListenAndServe(ctx)
 }

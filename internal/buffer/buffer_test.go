@@ -47,8 +47,9 @@ func (m *MockMetastore) CommitRecordBatchEvents(events []metastore.RecordBatchEv
 	return m.Called(events).Error(0)
 }
 
-func (m *MockMetastore) MaterializeRecordBatchEvents(nRecords int32) error {
-	return m.Called(nRecords).Error(0)
+func (m *MockMetastore) MaterializeRecordBatchEvents(nRecords int32) (int, error) {
+	args := m.Called(nRecords)
+	return args.Int(0), args.Error(1)
 }
 
 func (m *MockMetastore) CommitRecordBatchesV2(batches []metastore.RecordBatchV2) ([]metastore.BatchCommitOutputV2, error) {

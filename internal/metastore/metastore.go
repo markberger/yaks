@@ -16,7 +16,7 @@ type Metastore interface {
 	GetTopicsV2() ([]TopicV2, error)
 	GetTopicByName(name string) *TopicV2
 	CommitRecordBatchEvents(recordBatchEvents []RecordBatchEvent) error
-	MaterializeRecordBatchEvents(nRecords int32) error
+	MaterializeRecordBatchEvents(nRecords int32) (int, error)
 	CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchCommitOutputV2, error)
 	GetRecordBatchesV2(topicName string, partition int32, startOffset int64) ([]RecordBatchV2, error)
 	GetTopicPartitions(topicName string) ([]TopicPartition, error)
@@ -226,8 +226,9 @@ func (m *GormMetastore) CommitRecordBatchesV2(batches []RecordBatchV2) ([]BatchC
 	return results, nil
 }
 
-func (m *GormMetastore) MaterializeRecordBatchEvents(nRecords int32) error {
-	return m.db.Transaction(func(tx *gorm.DB) error {
+func (m *GormMetastore) MaterializeRecordBatchEvents(nRecords int32) (int, error) {
+	var rowsAffected int64
+	err := m.db.Transaction(func(tx *gorm.DB) error {
 		rawSQL := `
 		-- lock the events we are going to materialize
 		with locked_events as (
@@ -301,12 +302,15 @@ func (m *GormMetastore) MaterializeRecordBatchEvents(nRecords int32) error {
 		where id in (select id from locked_events);
 		`
 
-		if err := tx.Exec(rawSQL, nRecords).Error; err != nil {
-			return err
+		result := tx.Exec(rawSQL, nRecords)
+		if result.Error != nil {
+			return result.Error
 		}
+		rowsAffected = result.RowsAffected
 
 		return nil
 	})
+	return int(rowsAffected), err
 }
 
 func (m *GormMetastore) GetRecordBatchesV2(topicName string, partition int32, startOffset int64) ([]RecordBatchV2, error) {

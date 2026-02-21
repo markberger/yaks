@@ -194,8 +194,7 @@ func createExistingBatchData(ms *metastore.GormMetastore, topics []metastore.Top
 			return err
 		}
 
-		err = ms.MaterializeRecordBatchEvents(int32(len(existingEvents)))
-		if err != nil {
+		if _, err = ms.MaterializeRecordBatchEvents(int32(len(existingEvents))); err != nil {
 			return err
 		}
 	}
@@ -251,17 +250,11 @@ func runConcurrentIndexers(ms *metastore.GormMetastore, config BenchmarkConfig) 
 	if config.NumIndexers <= 1 {
 		// Single indexer case - process all events
 		for {
-			err := ms.MaterializeRecordBatchEvents(config.BatchSize)
+			n, err := ms.MaterializeRecordBatchEvents(config.BatchSize)
 			if err != nil {
 				return err
 			}
-
-			// Check if there are more unprocessed events
-			hasMore, checkErr := hasUnprocessedEvents(ms)
-			if checkErr != nil {
-				return checkErr
-			}
-			if !hasMore {
+			if n == 0 {
 				break
 			}
 		}
@@ -282,19 +275,12 @@ func runConcurrentIndexers(ms *metastore.GormMetastore, config BenchmarkConfig) 
 			for {
 				// The MaterializeRecordBatchEvents function uses FOR UPDATE SKIP LOCKED
 				// so multiple indexers can safely run concurrently
-				err := ms.MaterializeRecordBatchEvents(config.BatchSize)
+				n, err := ms.MaterializeRecordBatchEvents(config.BatchSize)
 				if err != nil {
 					errChan <- fmt.Errorf("indexer %d failed: %w", indexerID, err)
 					return
 				}
-
-				// Check if there are more unprocessed events
-				hasMore, checkErr := hasUnprocessedEvents(ms)
-				if checkErr != nil {
-					errChan <- fmt.Errorf("indexer %d failed to check for more events: %w", indexerID, checkErr)
-					return
-				}
-				if !hasMore {
+				if n == 0 {
 					break
 				}
 			}
@@ -313,16 +299,6 @@ func runConcurrentIndexers(ms *metastore.GormMetastore, config BenchmarkConfig) 
 	}
 
 	return nil
-}
-
-// hasUnprocessedEvents checks if there are any unprocessed events remaining
-func hasUnprocessedEvents(ms *metastore.GormMetastore) (bool, error) {
-	var count int64
-	err := ms.GetDB().Model(&metastore.RecordBatchEvent{}).Where("processed = false").Count(&count).Error
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
 }
 
 // collectBenchmarkMetrics gathers performance metrics after benchmark execution

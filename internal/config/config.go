@@ -13,6 +13,9 @@ type Config struct {
 	FlushIntervalMs int `env:"YAKS_FLUSH_INTERVAL_MS" envDefault:"250"`
 	FlushBytes      int `env:"YAKS_FLUSH_BYTES"        envDefault:"5242880"`
 
+	MaterializeIntervalMs int   `env:"YAKS_MATERIALIZE_INTERVAL_MS" envDefault:"100"`
+	MaterializeBatchSize  int32 `env:"YAKS_MATERIALIZE_BATCH_SIZE"  envDefault:"1000"`
+
 	DB metastore.Config         `envPrefix:""`
 	S3 s3_client.S3ClientConfig `envPrefix:""`
 }

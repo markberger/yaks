@@ -65,7 +65,7 @@ func (s *IntegrationTestsSuite) TestBufferedWriteRoundTrip() {
 	}
 
 	// Materialize the buffered events
-	err = agent.Metastore.MaterializeRecordBatchEvents(10)
+	_, err = agent.Metastore.MaterializeRecordBatchEvents(10)
 	require.NoError(T, err)
 
 	// Verify all events share the same S3Key (single packed object)
