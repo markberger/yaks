@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/markberger/yaks/internal/broker"
@@ -11,6 +12,7 @@ import (
 	"github.com/markberger/yaks/internal/materializer"
 	"github.com/markberger/yaks/internal/metastore"
 	"github.com/markberger/yaks/internal/s3_client"
+	log "github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
 
@@ -62,7 +64,21 @@ func (a *Agent) AddHandlers() {
 }
 
 func (a *Agent) ListenAndServe(ctx context.Context) {
-	go a.buffer.Start(ctx)
-	go a.materializer.Start(ctx)
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		a.buffer.Start(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		a.materializer.Start(ctx)
+	}()
+
 	a.broker.ListenAndServe(ctx)
+
+	log.Info("Broker stopped, waiting for buffer and materializer to finish...")
+	wg.Wait()
+	log.Info("Agent shutdown complete")
 }

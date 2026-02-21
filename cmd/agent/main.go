@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"log"
-	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/markberger/yaks/internal/agent"
 	"github.com/markberger/yaks/internal/config"
@@ -19,7 +20,6 @@ func main() {
 	db, err := metastore.Connect(cfg.DB)
 	if err != nil {
 		log.Fatalf("failed to connect to metastore: %v", err)
-		os.Exit(1)
 	}
 
 	// TODO: move migrator to separate cmd
@@ -27,8 +27,11 @@ func main() {
 	err = agent.ApplyMigrations()
 	if err != nil {
 		log.Fatalf("failed to apply db migrations: %v", err)
-		os.Exit(1)
 	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
 	agent.AddHandlers()
-	agent.ListenAndServe(context.Background())
+	agent.ListenAndServe(ctx)
 }
