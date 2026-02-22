@@ -15,8 +15,8 @@ func NewListOffsetsRequestHandler(m metastore.Metastore) *ListOffsetsRequestHand
 }
 
 func (h *ListOffsetsRequestHandler) Key() kmsg.Key     { return kmsg.ListOffsets }
-func (h *ListOffsetsRequestHandler) MinVersion() int16  { return 1 }
-func (h *ListOffsetsRequestHandler) MaxVersion() int16  { return 4 }
+func (h *ListOffsetsRequestHandler) MinVersion() int16 { return 1 }
+func (h *ListOffsetsRequestHandler) MaxVersion() int16 { return 4 }
 func (h *ListOffsetsRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	request := r.(*kmsg.ListOffsetsRequest)
 

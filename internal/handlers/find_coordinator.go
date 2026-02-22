@@ -14,8 +14,8 @@ func NewFindCoordinatorRequestHandler(b *broker.Broker) *FindCoordinatorRequestH
 }
 
 func (h *FindCoordinatorRequestHandler) Key() kmsg.Key     { return kmsg.FindCoordinator }
-func (h *FindCoordinatorRequestHandler) MinVersion() int16  { return 0 }
-func (h *FindCoordinatorRequestHandler) MaxVersion() int16  { return 2 }
+func (h *FindCoordinatorRequestHandler) MinVersion() int16 { return 0 }
+func (h *FindCoordinatorRequestHandler) MaxVersion() int16 { return 2 }
 func (h *FindCoordinatorRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	request := r.(*kmsg.FindCoordinatorRequest)
 

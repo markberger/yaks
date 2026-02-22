@@ -15,8 +15,8 @@ func NewOffsetFetchRequestHandler(m metastore.Metastore) *OffsetFetchRequestHand
 }
 
 func (h *OffsetFetchRequestHandler) Key() kmsg.Key     { return kmsg.OffsetFetch }
-func (h *OffsetFetchRequestHandler) MinVersion() int16  { return 1 }
-func (h *OffsetFetchRequestHandler) MaxVersion() int16  { return 5 }
+func (h *OffsetFetchRequestHandler) MinVersion() int16 { return 1 }
+func (h *OffsetFetchRequestHandler) MaxVersion() int16 { return 5 }
 func (h *OffsetFetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	request := r.(*kmsg.OffsetFetchRequest)
 

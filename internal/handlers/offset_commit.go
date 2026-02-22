@@ -15,8 +15,8 @@ func NewOffsetCommitRequestHandler(m metastore.Metastore) *OffsetCommitRequestHa
 }
 
 func (h *OffsetCommitRequestHandler) Key() kmsg.Key     { return kmsg.OffsetCommit }
-func (h *OffsetCommitRequestHandler) MinVersion() int16  { return 2 }
-func (h *OffsetCommitRequestHandler) MaxVersion() int16  { return 7 }
+func (h *OffsetCommitRequestHandler) MinVersion() int16 { return 2 }
+func (h *OffsetCommitRequestHandler) MaxVersion() int16 { return 7 }
 func (h *OffsetCommitRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	request := r.(*kmsg.OffsetCommitRequest)
 

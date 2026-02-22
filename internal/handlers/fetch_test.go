@@ -41,12 +41,32 @@ func createFetchRequest(topic string, partition int32, offset int64) *kmsg.Fetch
 	return &req
 }
 
-// fakeBatchData returns n bytes that are large enough for the FirstOffset patch (8 bytes).
-func fakeBatchData(n int) []byte {
-	data := make([]byte, n)
-	for i := range data {
-		data[i] = byte(i % 256)
-	}
+// TODO: double check wire format
+// fakeBatchData builds a minimal Kafka RecordBatch with a valid header so that
+// patchRecordBatchOffsets can walk the data correctly. nRecords is the number
+// of records the batch claims to contain.
+func fakeBatchData(nRecords int32) []byte {
+	// Kafka RecordBatch header layout (61 bytes):
+	//   0-7:   BaseOffset      (int64)
+	//   8-11:  BatchLength     (int32) - length of everything after this field
+	//   12-15: PartitionLeaderEpoch (int32)
+	//   16:    Magic           (int8)
+	//   17-20: CRC             (int32)
+	//   21-22: Attributes      (int16)
+	//   23-26: LastOffsetDelta (int32)
+	//   27-34: BaseTimestamp   (int64)
+	//   35-42: MaxTimestamp    (int64)
+	//   43-50: ProducerID      (int64)
+	//   51-52: ProducerEpoch   (int16)
+	//   53-56: BaseSequence    (int32)
+	//   57-60: NumRecords      (int32)
+	const headerSize = 61
+	data := make([]byte, headerSize)
+	// BatchLength = total size - BaseOffset(8) - BatchLength(4) = headerSize - 12
+	binary.BigEndian.PutUint32(data[8:], uint32(headerSize-12))
+	data[16] = 2                                              // Magic = 2 (current record batch format)
+	binary.BigEndian.PutUint32(data[23:], uint32(nRecords-1)) // LastOffsetDelta
+	binary.BigEndian.PutUint32(data[57:], uint32(nRecords))
 	return data
 }
 
@@ -67,7 +87,7 @@ func seedBatch(ms metastore.Metastore, topic string, partition int32, nRecords i
 
 func (s *HandlersTestSuite) TestFetch_Success_PatchesFirstOffset() {
 	ms := s.TestDB.InitMetastore()
-	batchBytes := fakeBatchData(61)
+	batchBytes := fakeBatchData(5)
 	output := seedBatch(ms, "fetch-test", 0, 5, "batches/001.batch", int64(len(batchBytes)))
 	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(batchBytes), nil)
@@ -97,7 +117,8 @@ func (s *HandlersTestSuite) TestFetch_Success_PatchesFirstOffset() {
 
 func (s *HandlersTestSuite) TestFetch_OffsetPastAllBatches_EmptyResponse() {
 	ms := s.TestDB.InitMetastore()
-	seedBatch(ms, "fetch-empty", 0, 5, "batches/002.batch", 61)
+	batchBytes := fakeBatchData(5)
+	seedBatch(ms, "fetch-empty", 0, 5, "batches/002.batch", int64(len(batchBytes)))
 
 	mockS3 := &s3_client.MockS3Client{}
 	// No GetObject calls expected
@@ -117,8 +138,8 @@ func (s *HandlersTestSuite) TestFetch_MultipleBatches_Concatenated() {
 	ms.CreateTopicV2("fetch-multi", 1)
 	topicID := ms.GetTopicByName("fetch-multi").ID
 
-	dataA := fakeBatchData(16)
-	dataB := fakeBatchData(32)
+	dataA := fakeBatchData(3)
+	dataB := fakeBatchData(2)
 
 	// Commit two batches sequentially
 	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
@@ -141,21 +162,21 @@ func (s *HandlersTestSuite) TestFetch_MultipleBatches_Concatenated() {
 	require.NoError(s.T(), err)
 	records := resp.(*kmsg.FetchResponse).Topics[0].Partitions[0].RecordBatches
 
-	// The handler should pass through the full S3 objects
-	require.Len(s.T(), records, 48) // 16 + 32
+	// The handler should pass through the full S3 objects (two 61-byte batches)
+	require.Len(s.T(), records, len(dataA)+len(dataB))
 
 	// Batch A: starts at offset 0 (first commit, 3 records → offsets 0-2)
 	firstOffsetA := binary.BigEndian.Uint64(records[:8])
 	require.Equal(s.T(), uint64(0), firstOffsetA)
 
 	// Batch B: starts at offset 3 (second commit, 2 records → offsets 3-4)
-	firstOffsetB := binary.BigEndian.Uint64(records[16 : 16+8])
+	firstOffsetB := binary.BigEndian.Uint64(records[len(dataA) : len(dataA)+8])
 	require.Equal(s.T(), uint64(3), firstOffsetB)
 }
 
 func (s *HandlersTestSuite) TestFetch_HighWatermark_ReflectsEndOffset() {
 	ms := s.TestDB.InitMetastore()
-	batchBytes := fakeBatchData(61)
+	batchBytes := fakeBatchData(5)
 	seedBatch(ms, "fetch-hwm", 0, 5, "batches/hwm.batch", int64(len(batchBytes)))
 
 	mockS3 := &s3_client.MockS3Client{}
@@ -194,9 +215,9 @@ func (s *HandlersTestSuite) TestFetch_MultipleTopicsAndPartitions() {
 	topicAID := ms.GetTopicByName("fetch-multi-a").ID
 	topicBID := ms.GetTopicByName("fetch-multi-b").ID
 
-	dataA0 := fakeBatchData(16)
-	dataA1 := fakeBatchData(24)
-	dataB0 := fakeBatchData(32)
+	dataA0 := fakeBatchData(3)
+	dataA1 := fakeBatchData(2)
+	dataB0 := fakeBatchData(4)
 
 	// Commit batches to different topic/partitions
 	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
@@ -263,7 +284,8 @@ func (s *HandlersTestSuite) TestFetch_MultipleTopicsAndPartitions() {
 
 func (s *HandlersTestSuite) TestFetch_S3Failure_ReturnsError() {
 	ms := s.TestDB.InitMetastore()
-	seedBatch(ms, "fetch-s3fail", 0, 5, "batches/fail.batch", 61)
+	batchData := fakeBatchData(5)
+	seedBatch(ms, "fetch-s3fail", 0, 5, "batches/fail.batch", int64(len(batchData)))
 
 	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(
@@ -284,16 +306,17 @@ func (s *HandlersTestSuite) TestFetch_PartitionMaxBytes_LimitsBatches() {
 	ms.CreateTopicV2("fetch-plimit", 1)
 	topicID := ms.GetTopicByName("fetch-plimit").ID
 
-	// 3 batches of 16 bytes each
-	data := fakeBatchData(16)
+	// 3 batches of 61 bytes each
+	data := fakeBatchData(1)
+	batchLen := int64(len(data))
 	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
-		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "plimit/1.batch", ByteLength: 16},
+		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "plimit/1.batch", ByteLength: batchLen},
 	})
 	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
-		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "plimit/2.batch", ByteLength: 16},
+		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "plimit/2.batch", ByteLength: batchLen},
 	})
 	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
-		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "plimit/3.batch", ByteLength: 16},
+		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "plimit/3.batch", ByteLength: batchLen},
 	})
 
 	mockS3 := &s3_client.MockS3Client{}
@@ -301,7 +324,7 @@ func (s *HandlersTestSuite) TestFetch_PartitionMaxBytes_LimitsBatches() {
 
 	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 
-	// PartitionMaxBytes=30 → first batch (16) always included, second (16+16=32) exceeds 30
+	// PartitionMaxBytes=100 → first batch (61) always included, second (61+61=122) exceeds 100
 	req := kmsg.NewFetchRequest()
 	req.SetVersion(3)
 	req.MaxBytes = math.MaxInt32
@@ -310,14 +333,14 @@ func (s *HandlersTestSuite) TestFetch_PartitionMaxBytes_LimitsBatches() {
 	p := kmsg.NewFetchRequestTopicPartition()
 	p.Partition = 0
 	p.FetchOffset = 0
-	p.PartitionMaxBytes = 30
+	p.PartitionMaxBytes = 100
 	t.Partitions = []kmsg.FetchRequestTopicPartition{p}
 	req.Topics = []kmsg.FetchRequestTopic{t}
 
 	resp, err := handler.Handle(&req)
 	require.NoError(s.T(), err)
 	records := resp.(*kmsg.FetchResponse).Topics[0].Partitions[0].RecordBatches
-	require.Len(s.T(), records, 16) // only first batch
+	require.Len(s.T(), records, int(batchLen)) // only first batch
 }
 
 func (s *HandlersTestSuite) TestFetch_ServerMaxBytes_OverridesClient() {
@@ -325,23 +348,24 @@ func (s *HandlersTestSuite) TestFetch_ServerMaxBytes_OverridesClient() {
 	ms.CreateTopicV2("fetch-srvlimit", 1)
 	topicID := ms.GetTopicByName("fetch-srvlimit").ID
 
-	// 3 batches of 20 bytes each
-	data := fakeBatchData(20)
+	// 3 batches of 61 bytes each
+	data := fakeBatchData(1)
+	batchLen := int64(len(data))
 	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
-		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "srv/1.batch", ByteLength: 20},
+		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "srv/1.batch", ByteLength: batchLen},
 	})
 	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
-		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "srv/2.batch", ByteLength: 20},
+		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "srv/2.batch", ByteLength: batchLen},
 	})
 	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
-		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "srv/3.batch", ByteLength: 20},
+		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "srv/3.batch", ByteLength: batchLen},
 	})
 
 	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(data), nil)
 
-	// Server max=30, client max=1000 → effective=30
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", 30)
+	// Server max=100, client max=1000 → effective=100
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", 100)
 
 	req := createFetchRequest("fetch-srvlimit", 0, 0)
 	req.MaxBytes = 1000
@@ -349,8 +373,8 @@ func (s *HandlersTestSuite) TestFetch_ServerMaxBytes_OverridesClient() {
 	resp, err := handler.Handle(req)
 	require.NoError(s.T(), err)
 	records := resp.(*kmsg.FetchResponse).Topics[0].Partitions[0].RecordBatches
-	// First batch (20) always included, second (20+20=40) exceeds 30
-	require.Len(s.T(), records, 20)
+	// First batch (61) always included, second (61+61=122) exceeds 100
+	require.Len(s.T(), records, int(batchLen))
 
 	// Verify only 1 S3 call was made, not 3
 	mockS3.AssertNumberOfCalls(s.T(), "GetObject", 1)
@@ -358,13 +382,13 @@ func (s *HandlersTestSuite) TestFetch_ServerMaxBytes_OverridesClient() {
 
 func (s *HandlersTestSuite) TestFetch_FirstBatchAlwaysIncluded() {
 	ms := s.TestDB.InitMetastore()
-	batchBytes := fakeBatchData(100)
-	seedBatch(ms, "fetch-forward", 0, 1, "forward/big.batch", 100)
+	batchBytes := fakeBatchData(1)
+	seedBatch(ms, "fetch-forward", 0, 1, "forward/big.batch", int64(len(batchBytes)))
 
 	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(batchBytes), nil)
 
-	// All limits set to 10, but the single 100-byte batch must still be returned
+	// All limits set to 10, but the single 61-byte batch must still be returned
 	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", 10)
 
 	req := kmsg.NewFetchRequest()
@@ -382,7 +406,7 @@ func (s *HandlersTestSuite) TestFetch_FirstBatchAlwaysIncluded() {
 	resp, err := handler.Handle(&req)
 	require.NoError(s.T(), err)
 	records := resp.(*kmsg.FetchResponse).Topics[0].Partitions[0].RecordBatches
-	require.Len(s.T(), records, 100)
+	require.Len(s.T(), records, len(batchBytes))
 }
 
 func (s *HandlersTestSuite) TestFetch_MaxBytes_CumulativeAcrossPartitions() {
@@ -390,20 +414,21 @@ func (s *HandlersTestSuite) TestFetch_MaxBytes_CumulativeAcrossPartitions() {
 	ms.CreateTopicV2("fetch-cumul", 2)
 	topicID := ms.GetTopicByName("fetch-cumul").ID
 
-	dataP0 := fakeBatchData(30)
-	dataP1a := fakeBatchData(20)
-	dataP1b := fakeBatchData(20)
+	dataP0 := fakeBatchData(1)
+	dataP1a := fakeBatchData(1)
+	dataP1b := fakeBatchData(1)
+	batchLen := int64(len(dataP0)) // 61 bytes each
 
-	// Partition 0: one 30-byte batch
+	// Partition 0: one batch
 	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
-		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "cumul/p0.batch", ByteLength: 30},
+		{TopicID: topicID, Partition: 0, NRecords: 1, S3Key: "cumul/p0.batch", ByteLength: batchLen},
 	})
-	// Partition 1: two 20-byte batches
+	// Partition 1: two batches
 	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
-		{TopicID: topicID, Partition: 1, NRecords: 1, S3Key: "cumul/p1a.batch", ByteLength: 20},
+		{TopicID: topicID, Partition: 1, NRecords: 1, S3Key: "cumul/p1a.batch", ByteLength: batchLen},
 	})
 	ms.CommitRecordBatchesV2([]metastore.RecordBatchV2{
-		{TopicID: topicID, Partition: 1, NRecords: 1, S3Key: "cumul/p1b.batch", ByteLength: 20},
+		{TopicID: topicID, Partition: 1, NRecords: 1, S3Key: "cumul/p1b.batch", ByteLength: batchLen},
 	})
 
 	mockS3 := &s3_client.MockS3Client{}
@@ -417,12 +442,12 @@ func (s *HandlersTestSuite) TestFetch_MaxBytes_CumulativeAcrossPartitions() {
 		return *in.Key == "cumul/p1b.batch"
 	})).Return(mockGetObjectReturn(dataP1b), nil)
 
-	// MaxBytes=55: partition 0 uses 30, partition 1 gets 25 remaining budget
+	// MaxBytes=100: partition 0 uses 61, partition 1 gets 39 remaining budget
 	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 
 	req := kmsg.NewFetchRequest()
 	req.SetVersion(3)
-	req.MaxBytes = 55
+	req.MaxBytes = 100
 	t := kmsg.NewFetchRequestTopic()
 	t.Topic = "fetch-cumul"
 	p0 := kmsg.NewFetchRequestTopicPartition()
@@ -440,15 +465,15 @@ func (s *HandlersTestSuite) TestFetch_MaxBytes_CumulativeAcrossPartitions() {
 	require.NoError(s.T(), err)
 	fetchResp := resp.(*kmsg.FetchResponse)
 
-	// Partition 0: 30 bytes (first batch always included)
-	require.Len(s.T(), fetchResp.Topics[0].Partitions[0].RecordBatches, 30)
-	// Partition 1: first batch (20) always included, second (20+20=40) would push total to 70 > 55
-	require.Len(s.T(), fetchResp.Topics[0].Partitions[1].RecordBatches, 20)
+	// Partition 0: 61 bytes (first batch always included)
+	require.Len(s.T(), fetchResp.Topics[0].Partitions[0].RecordBatches, int(batchLen))
+	// Partition 1: first batch (61) always included, second (61+61=122) would push total to 183 > 100
+	require.Len(s.T(), fetchResp.Topics[0].Partitions[1].RecordBatches, int(batchLen))
 }
 
 func (s *HandlersTestSuite) TestFetch_V4_LastStableOffset() {
 	ms := s.TestDB.InitMetastore()
-	batchBytes := fakeBatchData(61)
+	batchBytes := fakeBatchData(5)
 	seedBatch(ms, "fetch-v4", 0, 5, "batches/v4.batch", int64(len(batchBytes)))
 
 	mockS3 := &s3_client.MockS3Client{}
@@ -468,4 +493,3 @@ func (s *HandlersTestSuite) TestFetch_V4_LastStableOffset() {
 	require.Empty(s.T(), partition.AbortedTransactions)
 	require.Len(s.T(), partition.RecordBatches, len(batchBytes))
 }
-

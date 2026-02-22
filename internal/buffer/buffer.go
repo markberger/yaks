@@ -46,8 +46,8 @@ type WriteBuffer struct {
 	totalBytes   int
 	currentCycle *FlushPromise
 
-	s3Client  s3_client.S3Client
-	metastore metastore.Metastore
+	s3Client   s3_client.S3Client
+	metastore  metastore.Metastore
 	bucketName string
 
 	flushInterval time.Duration

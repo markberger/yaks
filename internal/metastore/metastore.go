@@ -266,8 +266,8 @@ func (m *GormMetastore) MaterializeRecordBatchEvents(nRecords int32) (int, error
 				e.topic_id,
 				e.partition,
 				e.n_records,
-				tp.end_offset + sum(e.n_records) over (partition by e.topic_id, e.partition order by e.id) - e.n_records as start_offset,
-				tp.end_offset + sum(e.n_records) over (partition by e.topic_id, e.partition order by e.id) as end_offset,
+				tp.end_offset + sum(e.n_records) over (partition by e.topic_id, e.partition order by e.created_at, e.id) - e.n_records as start_offset,
+				tp.end_offset + sum(e.n_records) over (partition by e.topic_id, e.partition order by e.created_at, e.id) as end_offset,
 				e.s3_key,
 				e.byte_offset,
 				e.byte_length
