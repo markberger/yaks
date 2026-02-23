@@ -1,2 +1,5 @@
 coverage.out
 .localstack-volume
+agent
+.DS_Store
+
