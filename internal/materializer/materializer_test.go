@@ -5,11 +5,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/google/uuid"
 	"github.com/markberger/yaks/internal/metastore"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
+
+var noopMetrics = &statsd.NoOpClient{}
 
 type MaterializerTestSuite struct {
 	suite.Suite
@@ -62,7 +65,7 @@ func (s *MaterializerTestSuite) TestBasicMaterialization() {
 	require.NoError(T, err)
 
 	// Start materializer with a short interval
-	m := NewMaterializer(ms, 50*time.Millisecond, 100)
+	m := NewMaterializer(ms, 50*time.Millisecond, 100, noopMetrics)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan struct{})
@@ -112,7 +115,7 @@ func (s *MaterializerTestSuite) TestGracefulShutdown() {
 	require.NotNil(T, topic)
 
 	// Long interval so the ticker won't fire
-	m := NewMaterializer(ms, time.Hour, 100)
+	m := NewMaterializer(ms, time.Hour, 100, noopMetrics)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan struct{})
@@ -157,7 +160,7 @@ func (s *MaterializerTestSuite) TestEmptyTick() {
 	ms := s.TestDB.InitMetastore()
 
 	// Start materializer with no pending events
-	m := NewMaterializer(ms, 50*time.Millisecond, 100)
+	m := NewMaterializer(ms, 50*time.Millisecond, 100, noopMetrics)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan struct{})
@@ -206,7 +209,7 @@ func (s *MaterializerTestSuite) TestDrainLoop() {
 	require.NoError(T, err)
 
 	// Start materializer with small batch size
-	m := NewMaterializer(ms, 50*time.Millisecond, batchSize)
+	m := NewMaterializer(ms, 50*time.Millisecond, batchSize, noopMetrics)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan struct{})

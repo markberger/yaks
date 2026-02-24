@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"errors"
+	"strconv"
 
+	"github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/markberger/yaks/internal/buffer"
 	"github.com/markberger/yaks/internal/metastore"
 	log "github.com/sirupsen/logrus"
@@ -13,12 +15,14 @@ import (
 type ProduceRequestHandler struct {
 	metastore metastore.Metastore
 	buffer    *buffer.WriteBuffer
+	metrics   statsd.ClientInterface
 }
 
-func NewProduceRequestHandler(m metastore.Metastore, buf *buffer.WriteBuffer) *ProduceRequestHandler {
+func NewProduceRequestHandler(m metastore.Metastore, buf *buffer.WriteBuffer, metrics statsd.ClientInterface) *ProduceRequestHandler {
 	return &ProduceRequestHandler{
 		metastore: m,
 		buffer:    buf,
+		metrics:   metrics,
 	}
 }
 
@@ -41,9 +45,12 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	for _, topic := range request.Topics {
 		var topicResponse kmsg.ProduceResponseTopic
 		topicResponse.Topic = topic.Topic
+		topicTag := []string{"topic:" + topic.Topic}
 
 		metaTopic := h.metastore.GetTopicByName(topic.Topic)
 
+		var topicBytes int64
+		var topicRecords int64
 		for _, partition := range topic.Partitions {
 			partitionResponse := kmsg.NewProduceResponseTopicPartition()
 			partitionResponse.Partition = partition.Partition
@@ -52,6 +59,7 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 			if metaTopic == nil || partition.Partition < 0 || partition.Partition >= metaTopic.NPartitions {
 				log.WithFields(log.Fields{"topic": topic.Topic, "partition": partition.Partition, "metaTopic": metaTopic}).Info("Invalid TopicPartition")
 				partitionResponse.ErrorCode = kerr.UnknownTopicOrPartition.Code
+				h.metrics.Incr("produce.partition_errors", []string{"topic:" + topic.Topic, "error_code:" + strconv.Itoa(int(kerr.UnknownTopicOrPartition.Code))}, 1)
 				topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
 				continue
 			}
@@ -60,9 +68,13 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 			var recordBatch kmsg.RecordBatch
 			if err := recordBatch.ReadFrom(partition.Records); err != nil {
 				partitionResponse.ErrorCode = kerr.CorruptMessage.Code
+				h.metrics.Incr("produce.partition_errors", []string{"topic:" + topic.Topic, "error_code:" + strconv.Itoa(int(kerr.CorruptMessage.Code))}, 1)
 				topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
 				continue
 			}
+
+			topicBytes += int64(len(partition.Records))
+			topicRecords += int64(recordBatch.NumRecords)
 
 			// Submit to write buffer
 			key := buffer.PartitionKey{
@@ -77,6 +89,10 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 			partitionResponse.BaseOffset = -1
 			partitionResponse.ErrorCode = 0
 			topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
+		}
+		if topicBytes > 0 {
+			h.metrics.Count("produce.bytes", topicBytes, topicTag, 1)
+			h.metrics.Count("produce.records", topicRecords, topicTag, 1)
 		}
 		response.Topics = append(response.Topics, topicResponse)
 	}

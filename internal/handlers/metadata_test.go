@@ -3,6 +3,7 @@ package handlers
 import (
 	"sort"
 
+	"github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/markberger/yaks/internal/broker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -11,7 +12,7 @@ import (
 
 func newMetadataHandler(s *HandlersTestSuite) (*MetadataRequestHandler, *broker.Broker) {
 	metastore := s.TestDB.InitMetastore()
-	b := broker.NewBroker(1, "localhost", 9092, "localhost", 9092)
+	b := broker.NewBroker(1, "localhost", 9092, "localhost", 9092, &statsd.NoOpClient{})
 	return NewMetadataRequestHandler(b, metastore), b
 }
 

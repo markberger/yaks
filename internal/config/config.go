@@ -1,10 +1,22 @@
 package config
 
 import (
+	"fmt"
+
 	"github.com/caarlos0/env/v11"
 	"github.com/markberger/yaks/internal/metastore"
 	"github.com/markberger/yaks/internal/s3_client"
 )
+
+type StatsdConfig struct {
+	Enabled bool   `env:"YAKS_STATSD_ENABLED" envDefault:"false"`
+	Host    string `env:"YAKS_STATSD_HOST"    envDefault:"localhost"`
+	Port    int    `env:"YAKS_STATSD_PORT"    envDefault:"8125"`
+}
+
+func (c StatsdConfig) Addr() string {
+	return fmt.Sprintf("%s:%d", c.Host, c.Port)
+}
 
 type Config struct {
 	BrokerHost     string `env:"YAKS_BROKER_HOST"      envDefault:"0.0.0.0"`
@@ -21,8 +33,9 @@ type Config struct {
 
 	FetchMaxBytes int32 `env:"YAKS_FETCH_MAX_BYTES" envDefault:"52428800"`
 
-	DB metastore.Config         `envPrefix:""`
-	S3 s3_client.S3ClientConfig `envPrefix:""`
+	DB     metastore.Config         `envPrefix:""`
+	S3     s3_client.S3ClientConfig `envPrefix:""`
+	Statsd StatsdConfig             `envPrefix:""`
 }
 
 // GetAdvertisedPort returns AdvertisedPort if set, otherwise BrokerPort.

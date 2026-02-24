@@ -92,6 +92,14 @@ All settings are configured via environment variables prefixed with `YAKS_`.
 | `YAKS_DB_NAME`     | `testdb`       | Database name     |
 | `YAKS_DB_SSLMODE`  | `disable`      | SSL mode          |
 
+### StatsD
+
+| Variable              | Default     | Description                          |
+| --------------------- | ----------- | ------------------------------------ |
+| `YAKS_STATSD_ENABLED` | `false`     | Enable StatsD metrics emission       |
+| `YAKS_STATSD_HOST`    | `localhost` | StatsD host                          |
+| `YAKS_STATSD_PORT`    | `8125`      | StatsD port                          |
+
 ### S3
 
 | Variable             | Default                 | Description                                         |
@@ -126,7 +134,7 @@ and production ready. Some things I'd like to get around to implementing are:
   on disk to reduce API calls
 - Compact record batches on S3 in the background for efficient whole-topic
   retrieval
-- Health checks, statsd metrics, tracing
+- Health checks, tracing
 
 ## Related Resources
 

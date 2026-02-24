@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/datadog-go/v5/statsd"
 	ckafka "github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
@@ -18,7 +19,7 @@ func TestApiVersionsHandler(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}()
 
-	broker := NewBroker(0, "localhost", 9092, "localhost", 9092)
+	broker := NewBroker(0, "localhost", 9092, "localhost", 9092, &statsd.NoOpClient{})
 	broker.Add(NewApiVersionsRequestHandler(broker.handlerRegistry))
 	go broker.ListenAndServe(ctx)
 	time.Sleep(500 * time.Millisecond)
@@ -58,7 +59,7 @@ func TestConfluentMetadataRequest(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}()
 
-	broker := NewBroker(0, "localhost", 9092, "localhost", 9092)
+	broker := NewBroker(0, "localhost", 9092, "localhost", 9092, &statsd.NoOpClient{})
 	broker.Add(NewApiVersionsRequestHandler(broker.handlerRegistry))
 	broker.Add(NewMockMetadataRequestHandler(broker))
 	go broker.ListenAndServe(ctx)

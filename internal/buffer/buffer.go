@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
@@ -49,6 +50,7 @@ type WriteBuffer struct {
 	s3Client   s3_client.S3Client
 	metastore  metastore.Metastore
 	bucketName string
+	metrics    statsd.ClientInterface
 
 	flushInterval time.Duration
 	flushBytes    int
@@ -61,12 +63,14 @@ func NewWriteBuffer(
 	bucketName string,
 	flushInterval time.Duration,
 	flushBytes int,
+	metrics statsd.ClientInterface,
 ) *WriteBuffer {
 	return &WriteBuffer{
 		currentCycle:  newFlushPromise(),
 		s3Client:      s3Client,
 		metastore:     metastore,
 		bucketName:    bucketName,
+		metrics:       metrics,
 		flushInterval: flushInterval,
 		flushBytes:    flushBytes,
 		triggerCh:     make(chan struct{}, 1),
@@ -129,7 +133,16 @@ type partitionGroup struct {
 	nRecords int64
 }
 
+func statusTag(err error) string {
+	if err != nil {
+		return "error"
+	}
+	return "success"
+}
+
 func (wb *WriteBuffer) flush() {
+	flushStart := time.Now()
+
 	// Swap out current submissions under lock
 	wb.mu.Lock()
 	subs := wb.submissions
@@ -176,6 +189,7 @@ func (wb *WriteBuffer) flush() {
 		nRecords   int64
 	}
 	var events []eventInfo
+	var totalRecords int64
 
 	for _, gk := range groupOrder {
 		g := groups[gk]
@@ -187,6 +201,7 @@ func (wb *WriteBuffer) flush() {
 			byteLength: int64(len(g.data)),
 			nRecords:   g.nRecords,
 		})
+		totalRecords += g.nRecords
 	}
 
 	// Single S3 PUT
@@ -201,9 +216,12 @@ func (wb *WriteBuffer) flush() {
 		ContentType:   aws.String("application/octet-stream"),
 	}
 
+	s3Start := time.Now()
 	_, err := wb.s3Client.PutObject(context.Background(), input)
+	wb.metrics.Timing("buffer.s3_put_duration_ms", time.Since(s3Start), []string{"status:" + statusTag(err)}, 1)
 	if err != nil {
 		log.WithError(err).Error("WriteBuffer: S3 upload failed")
+		wb.metrics.Timing("buffer.flush_duration_ms", time.Since(flushStart), []string{"status:s3_error"}, 1)
 		cycle.err = fmt.Errorf("s3 upload failed: %w", err)
 		close(cycle.done)
 		return
@@ -223,12 +241,21 @@ func (wb *WriteBuffer) flush() {
 	}
 
 	// DB commit
-	if err := wb.metastore.CommitRecordBatchEvents(batchEvents); err != nil {
+	dbStart := time.Now()
+	err = wb.metastore.CommitRecordBatchEvents(batchEvents)
+	wb.metrics.Timing("buffer.db_commit_duration_ms", time.Since(dbStart), []string{"status:" + statusTag(err)}, 1)
+	if err != nil {
 		log.WithError(err).Error("WriteBuffer: DB commit failed")
+		wb.metrics.Timing("buffer.flush_duration_ms", time.Since(flushStart), []string{"status:db_error"}, 1)
 		cycle.err = fmt.Errorf("db commit failed: %w", err)
 		close(cycle.done)
 		return
 	}
+
+	wb.metrics.Count("buffer.flush_bytes", size, nil, 1)
+	wb.metrics.Count("buffer.flush_records", totalRecords, nil, 1)
+	wb.metrics.Count("buffer.flush_events", int64(len(events)), nil, 1)
+	wb.metrics.Timing("buffer.flush_duration_ms", time.Since(flushStart), []string{"status:success"}, 1)
 
 	cycle.err = nil
 	close(cycle.done)

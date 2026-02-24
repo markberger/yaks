@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/markberger/yaks/internal/metastore"
 	"github.com/markberger/yaks/internal/s3_client"
@@ -18,10 +19,11 @@ type FetchRequestHandler struct {
 	s3Client   s3_client.S3Client
 	bucketName string
 	maxBytes   int32
+	metrics    statsd.ClientInterface
 }
 
-func NewFetchRequestHandler(metastore metastore.Metastore, s3Client s3_client.S3Client, bucketName string, maxBytes int32) *FetchRequestHandler {
-	return &FetchRequestHandler{metastore, s3Client, bucketName, maxBytes}
+func NewFetchRequestHandler(metastore metastore.Metastore, s3Client s3_client.S3Client, bucketName string, maxBytes int32, metrics statsd.ClientInterface) *FetchRequestHandler {
+	return &FetchRequestHandler{metastore, s3Client, bucketName, maxBytes, metrics}
 }
 
 func (h *FetchRequestHandler) Key() kmsg.Key     { return kmsg.Fetch }
@@ -44,6 +46,7 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	for _, t := range request.Topics {
 		responseTopic := kmsg.NewFetchResponseTopic()
 		responseTopic.Topic = t.Topic
+		topicTag := []string{"topic:" + t.Topic}
 
 		// Build high water mark map from topic partitions
 		hwmMap := make(map[int32]int64)
@@ -55,6 +58,9 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 			hwmMap[tp.Partition] = tp.EndOffset
 		}
 
+		var topicBytes int64
+		var topicRecords int64
+		var topicS3Downloads int64
 		for _, p := range t.Partitions {
 			batchesMetadata, err := h.metastore.GetRecordBatchesV2(t.Topic, p.Partition, p.FetchOffset)
 			if err != nil {
@@ -109,6 +115,7 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 				if err != nil {
 					return nil, fmt.Errorf("failed to fetch batch %s: %w", metadata.S3Key, err)
 				}
+				topicS3Downloads++
 
 				// Patch BaseOffset for every RecordBatch in the chunk.
 				// A chunk may contain multiple concatenated RecordBatch messages
@@ -120,11 +127,18 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 				totalRecords += metadata.NRecords
 			}
 
+			topicBytes += int64(partitionBytes)
+			topicRecords += totalRecords
 			totalResponseBytes += partitionBytes
 			responsePartition.RecordBatches = recordBatches
 			responseTopic.Partitions = append(responseTopic.Partitions, responsePartition)
 		}
 
+		if topicBytes > 0 || topicS3Downloads > 0 {
+			h.metrics.Count("fetch.bytes", topicBytes, topicTag, 1)
+			h.metrics.Count("fetch.records", topicRecords, topicTag, 1)
+			h.metrics.Count("fetch.s3_downloads", topicS3Downloads, topicTag, 1)
+		}
 		response.Topics = append(response.Topics, responseTopic)
 	}
 	return &response, nil
