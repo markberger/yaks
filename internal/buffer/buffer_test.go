@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"github.com/markberger/yaks/internal/metastore"
@@ -17,8 +16,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
-
-var noopMetrics = &statsd.NoOpClient{}
 
 // MockMetastore implements metastore.Metastore
 type MockMetastore struct {
@@ -98,7 +95,7 @@ func TestBasicFlush(t *testing.T) {
 
 	mockMeta.On("CommitRecordBatchEvents", mock.Anything).Return(nil)
 
-	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30, noopMetrics)
+	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30)
 
 	data := []byte("hello-world")
 	promise := wb.Submit(PartitionKey{TopicID: topicID, TopicName: "topic-1", Partition: 0}, data, 5)
@@ -141,7 +138,7 @@ func TestMultiPartitionPacking(t *testing.T) {
 
 	mockMeta.On("CommitRecordBatchEvents", mock.Anything).Return(nil)
 
-	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30, noopMetrics)
+	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30)
 
 	data0 := []byte("partition-zero")
 	data1 := []byte("partition-one")
@@ -184,7 +181,7 @@ func TestSamePartitionBatching(t *testing.T) {
 
 	mockMeta.On("CommitRecordBatchEvents", mock.Anything).Return(nil)
 
-	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30, noopMetrics)
+	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30)
 
 	key := PartitionKey{TopicID: topicID, TopicName: "t", Partition: 0}
 	wb.Submit(key, []byte("aaa"), 1)
@@ -214,7 +211,7 @@ func TestFlushCycleIsolation(t *testing.T) {
 	mockS3.On("PutObject", mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
 	mockMeta.On("CommitRecordBatchEvents", mock.Anything).Return(nil)
 
-	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30, noopMetrics)
+	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30)
 
 	key := PartitionKey{TopicID: topicID, TopicName: "t", Partition: 0}
 
@@ -240,7 +237,7 @@ func TestS3FailurePropagation(t *testing.T) {
 
 	mockS3.On("PutObject", mock.Anything, mock.Anything).Return((*s3.PutObjectOutput)(nil), errors.New("s3 exploded"))
 
-	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30, noopMetrics)
+	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30)
 
 	key := PartitionKey{TopicID: topicID, TopicName: "t", Partition: 0}
 	promise := wb.Submit(key, []byte("data"), 1)
@@ -262,7 +259,7 @@ func TestDBFailurePropagation(t *testing.T) {
 	mockS3.On("PutObject", mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
 	mockMeta.On("CommitRecordBatchEvents", mock.Anything).Return(errors.New("db exploded"))
 
-	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30, noopMetrics)
+	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30)
 
 	key := PartitionKey{TopicID: topicID, TopicName: "t", Partition: 0}
 	promise := wb.Submit(key, []byte("data"), 1)
@@ -282,7 +279,7 @@ func TestSizeThresholdTriggersFlush(t *testing.T) {
 	mockMeta.On("CommitRecordBatchEvents", mock.Anything).Return(nil)
 
 	// Set flush threshold to 10 bytes
-	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 10, noopMetrics)
+	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 10)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go wb.Start(ctx)
@@ -310,7 +307,7 @@ func TestTimerFlush(t *testing.T) {
 	mockMeta.On("CommitRecordBatchEvents", mock.Anything).Return(nil)
 
 	// Very short interval to trigger timer-based flush
-	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", 50*time.Millisecond, 1<<30, noopMetrics)
+	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", 50*time.Millisecond, 1<<30)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go wb.Start(ctx)
@@ -336,7 +333,7 @@ func TestConcurrentSubmits(t *testing.T) {
 	mockS3.On("PutObject", mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
 	mockMeta.On("CommitRecordBatchEvents", mock.Anything).Return(nil)
 
-	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30, noopMetrics)
+	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30)
 
 	key := PartitionKey{TopicID: topicID, TopicName: "t", Partition: 0}
 
@@ -344,7 +341,7 @@ func TestConcurrentSubmits(t *testing.T) {
 	nGoroutines := 50
 	promises := make([]*FlushPromise, nGoroutines)
 
-	for i := 0; i < nGoroutines; i++ {
+	for i := range nGoroutines {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -364,7 +361,7 @@ func TestEmptyFlush(t *testing.T) {
 	mockS3 := &s3_client.MockS3Client{}
 	mockMeta := &MockMetastore{}
 
-	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30, noopMetrics)
+	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30)
 
 	// Flush with no submissions
 	wb.flush()
@@ -383,7 +380,7 @@ func TestGracefulShutdown(t *testing.T) {
 	mockMeta.On("CommitRecordBatchEvents", mock.Anything).Return(nil)
 
 	// Long interval so timer won't fire
-	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30, noopMetrics)
+	wb := NewWriteBuffer(mockS3, mockMeta, "test-bucket", time.Hour, 1<<30)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

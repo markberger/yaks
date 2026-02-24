@@ -1,28 +1,29 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"strconv"
 
-	"github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/markberger/yaks/internal/buffer"
+	"github.com/markberger/yaks/internal/metrics"
 	"github.com/markberger/yaks/internal/metastore"
 	log "github.com/sirupsen/logrus"
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kmsg"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 type ProduceRequestHandler struct {
 	metastore metastore.Metastore
 	buffer    *buffer.WriteBuffer
-	metrics   statsd.ClientInterface
 }
 
-func NewProduceRequestHandler(m metastore.Metastore, buf *buffer.WriteBuffer, metrics statsd.ClientInterface) *ProduceRequestHandler {
+func NewProduceRequestHandler(m metastore.Metastore, buf *buffer.WriteBuffer) *ProduceRequestHandler {
 	return &ProduceRequestHandler{
 		metastore: m,
 		buffer:    buf,
-		metrics:   metrics,
 	}
 }
 
@@ -30,10 +31,15 @@ func (h *ProduceRequestHandler) Key() kmsg.Key     { return kmsg.Produce }
 func (h *ProduceRequestHandler) MinVersion() int16 { return 3 }
 func (h *ProduceRequestHandler) MaxVersion() int16 { return 3 }
 func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
+	ctx := context.Background()
 	request := r.(*kmsg.ProduceRequest)
 	if request.TransactionID != nil {
 		return nil, errors.New("ProduceRequestHandler does not support transactional producers")
 	}
+
+	produceBytes, _ := metrics.Meter.Int64Counter("yaks.produce.bytes")
+	produceRecords, _ := metrics.Meter.Int64Counter("yaks.produce.records")
+	partitionErrors, _ := metrics.Meter.Int64Counter("yaks.produce.partition.errors")
 
 	response := kmsg.NewProduceResponse()
 	response.SetVersion(request.GetVersion())
@@ -45,7 +51,7 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	for _, topic := range request.Topics {
 		var topicResponse kmsg.ProduceResponseTopic
 		topicResponse.Topic = topic.Topic
-		topicTag := []string{"topic:" + topic.Topic}
+		topicAttr := attribute.String("topic", topic.Topic)
 
 		metaTopic := h.metastore.GetTopicByName(topic.Topic)
 
@@ -59,7 +65,10 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 			if metaTopic == nil || partition.Partition < 0 || partition.Partition >= metaTopic.NPartitions {
 				log.WithFields(log.Fields{"topic": topic.Topic, "partition": partition.Partition, "metaTopic": metaTopic}).Info("Invalid TopicPartition")
 				partitionResponse.ErrorCode = kerr.UnknownTopicOrPartition.Code
-				h.metrics.Incr("produce.partition_errors", []string{"topic:" + topic.Topic, "error_code:" + strconv.Itoa(int(kerr.UnknownTopicOrPartition.Code))}, 1)
+				partitionErrors.Add(ctx, 1, metric.WithAttributes(
+					topicAttr,
+					attribute.String("error_code", strconv.Itoa(int(kerr.UnknownTopicOrPartition.Code))),
+				))
 				topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
 				continue
 			}
@@ -68,7 +77,10 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 			var recordBatch kmsg.RecordBatch
 			if err := recordBatch.ReadFrom(partition.Records); err != nil {
 				partitionResponse.ErrorCode = kerr.CorruptMessage.Code
-				h.metrics.Incr("produce.partition_errors", []string{"topic:" + topic.Topic, "error_code:" + strconv.Itoa(int(kerr.CorruptMessage.Code))}, 1)
+				partitionErrors.Add(ctx, 1, metric.WithAttributes(
+					topicAttr,
+					attribute.String("error_code", strconv.Itoa(int(kerr.CorruptMessage.Code))),
+				))
 				topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
 				continue
 			}
@@ -91,8 +103,8 @@ func (h *ProduceRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 			topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
 		}
 		if topicBytes > 0 {
-			h.metrics.Count("produce.bytes", topicBytes, topicTag, 1)
-			h.metrics.Count("produce.records", topicRecords, topicTag, 1)
+			produceBytes.Add(ctx, topicBytes, metric.WithAttributes(topicAttr))
+			produceRecords.Add(ctx, topicRecords, metric.WithAttributes(topicAttr))
 		}
 		response.Topics = append(response.Topics, topicResponse)
 	}

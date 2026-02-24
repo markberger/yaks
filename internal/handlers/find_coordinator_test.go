@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/markberger/yaks/internal/broker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -9,7 +8,7 @@ import (
 )
 
 func (s *HandlersTestSuite) TestFindCoordinator_ReturnsCorrectBrokerInfo() {
-	b := broker.NewBroker(1, "myhost", 9092, "myhost", 9092, &statsd.NoOpClient{})
+	b := broker.NewBroker(1, "myhost", 9092, "myhost", 9092)
 	handler := NewFindCoordinatorRequestHandler(b)
 
 	request := kmsg.NewFindCoordinatorRequest()
@@ -28,7 +27,7 @@ func (s *HandlersTestSuite) TestFindCoordinator_ReturnsCorrectBrokerInfo() {
 }
 
 func (s *HandlersTestSuite) TestFindCoordinator_VersionHandling() {
-	b := broker.NewBroker(0, "localhost", 9092, "localhost", 9092, &statsd.NoOpClient{})
+	b := broker.NewBroker(0, "localhost", 9092, "localhost", 9092)
 	handler := NewFindCoordinatorRequestHandler(b)
 
 	for _, version := range []int16{0, 1, 2} {

@@ -1,18 +1,48 @@
 package metrics
 
 import (
-	"github.com/DataDog/datadog-go/v5/statsd"
+	"context"
+	"time"
+
 	"github.com/markberger/yaks/internal/config"
 	log "github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
 
-func NewClient(cfg config.StatsdConfig) statsd.ClientInterface {
+// Meter is the global OTel Meter used by all instrumented components.
+// It defaults to a no-op meter and is initialized by Init.
+var Meter metric.Meter = noop.NewMeterProvider().Meter("yaks")
+
+// Init configures the global Meter from the given OTel config. When
+// cfg.Enabled is false, Meter remains a no-op. Returns a shutdown function
+// that flushes and closes the exporter.
+func Init(ctx context.Context, cfg config.OTelConfig) (func(context.Context) error, error) {
 	if !cfg.Enabled {
-		return &statsd.NoOpClient{}
+		return func(context.Context) error { return nil }, nil
 	}
-	client, err := statsd.New(cfg.Addr(), statsd.WithNamespace("yaks."))
+
+	exporter, err := otlpmetrichttp.New(ctx,
+		otlpmetrichttp.WithEndpointURL(cfg.Endpoint),
+	)
 	if err != nil {
-		log.WithError(err).Fatal("Failed to create StatsD client")
+		return nil, err
 	}
-	return client
+
+	mp := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(
+			sdkmetric.NewPeriodicReader(exporter, sdkmetric.WithInterval(10*time.Second)),
+		),
+	)
+
+	Meter = mp.Meter("yaks")
+
+	shutdown := func(ctx context.Context) error {
+		log.Info("Shutting down OTel MeterProvider...")
+		return mp.Shutdown(ctx)
+	}
+
+	return shutdown, nil
 }

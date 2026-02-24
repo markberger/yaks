@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/markberger/yaks/internal/broker"
 	"github.com/markberger/yaks/internal/buffer"
 	"github.com/markberger/yaks/internal/config"
@@ -27,13 +26,18 @@ type Agent struct {
 	fetchMaxBytes int32
 	buffer        *buffer.WriteBuffer
 	materializer  *materializer.Materializer
-	metrics       statsd.ClientInterface
+	shutdownOTel  func(context.Context) error
 }
 
 func NewAgent(db *gorm.DB, cfg config.Config) *Agent {
-	metricsClient := metrics.NewClient(cfg.Statsd)
+	ctx := context.Background()
+	shutdown, err := metrics.Init(ctx, cfg.OTel)
+	if err != nil {
+		log.WithError(err).Fatal("Failed to initialize OTel metrics")
+	}
+
 	metastore := metastore.NewGormMetastore(db)
-	broker := broker.NewBroker(0, cfg.BrokerHost, cfg.BrokerPort, cfg.AdvertisedHost, cfg.GetAdvertisedPort(), metricsClient)
+	b := broker.NewBroker(0, cfg.BrokerHost, cfg.BrokerPort, cfg.AdvertisedHost, cfg.GetAdvertisedPort())
 	s3Client := s3_client.CreateS3Client(cfg.S3)
 	buf := buffer.NewWriteBuffer(
 		s3Client,
@@ -41,15 +45,13 @@ func NewAgent(db *gorm.DB, cfg config.Config) *Agent {
 		cfg.S3.Bucket,
 		time.Duration(cfg.FlushIntervalMs)*time.Millisecond,
 		cfg.FlushBytes,
-		metricsClient,
 	)
 	mat := materializer.NewMaterializer(
 		metastore,
 		time.Duration(cfg.MaterializeIntervalMs)*time.Millisecond,
 		cfg.MaterializeBatchSize,
-		metricsClient,
 	)
-	return &Agent{db, metastore, broker, s3Client, cfg.S3.Bucket, cfg.FetchMaxBytes, buf, mat, metricsClient}
+	return &Agent{db, metastore, b, s3Client, cfg.S3.Bucket, cfg.FetchMaxBytes, buf, mat, shutdown}
 }
 
 // TODO: agent should not apply migrations it should be done by a separate
@@ -61,8 +63,8 @@ func (a *Agent) ApplyMigrations() error {
 func (a *Agent) AddHandlers() {
 	a.broker.Add(handlers.NewMetadataRequestHandler(a.broker, a.Metastore))
 	a.broker.Add(handlers.NewCreateTopicsRequestHandler(a.Metastore))
-	a.broker.Add(handlers.NewProduceRequestHandler(a.Metastore, a.buffer, a.metrics))
-	a.broker.Add(handlers.NewFetchRequestHandler(a.Metastore, a.s3Client, a.bucket, a.fetchMaxBytes, a.metrics))
+	a.broker.Add(handlers.NewProduceRequestHandler(a.Metastore, a.buffer))
+	a.broker.Add(handlers.NewFetchRequestHandler(a.Metastore, a.s3Client, a.bucket, a.fetchMaxBytes))
 	a.broker.Add(handlers.NewFindCoordinatorRequestHandler(a.broker))
 	a.broker.Add(handlers.NewOffsetCommitRequestHandler(a.Metastore))
 	a.broker.Add(handlers.NewOffsetFetchRequestHandler(a.Metastore))
@@ -86,5 +88,11 @@ func (a *Agent) ListenAndServe(ctx context.Context) {
 
 	log.Info("Broker stopped, waiting for buffer and materializer to finish...")
 	wg.Wait()
+
+	if a.shutdownOTel != nil {
+		if err := a.shutdownOTel(context.Background()); err != nil {
+			log.WithError(err).Error("OTel MeterProvider shutdown error")
+		}
+	}
 	log.Info("Agent shutdown complete")
 }

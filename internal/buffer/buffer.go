@@ -7,13 +7,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
+	"github.com/markberger/yaks/internal/metrics"
 	"github.com/markberger/yaks/internal/metastore"
 	"github.com/markberger/yaks/internal/s3_client"
 	log "github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 type PartitionKey struct {
@@ -50,7 +52,6 @@ type WriteBuffer struct {
 	s3Client   s3_client.S3Client
 	metastore  metastore.Metastore
 	bucketName string
-	metrics    statsd.ClientInterface
 
 	flushInterval time.Duration
 	flushBytes    int
@@ -63,14 +64,12 @@ func NewWriteBuffer(
 	bucketName string,
 	flushInterval time.Duration,
 	flushBytes int,
-	metrics statsd.ClientInterface,
 ) *WriteBuffer {
 	return &WriteBuffer{
 		currentCycle:  newFlushPromise(),
 		s3Client:      s3Client,
 		metastore:     metastore,
 		bucketName:    bucketName,
-		metrics:       metrics,
 		flushInterval: flushInterval,
 		flushBytes:    flushBytes,
 		triggerCh:     make(chan struct{}, 1),
@@ -141,7 +140,15 @@ func statusTag(err error) string {
 }
 
 func (wb *WriteBuffer) flush() {
+	ctx := context.Background()
 	flushStart := time.Now()
+
+	s3PutDuration, _ := metrics.Meter.Float64Histogram("yaks.buffer.s3.put.duration", metric.WithUnit("s"))
+	dbCommitDuration, _ := metrics.Meter.Float64Histogram("yaks.buffer.db.commit.duration", metric.WithUnit("s"))
+	flushDuration, _ := metrics.Meter.Float64Histogram("yaks.buffer.flush.duration", metric.WithUnit("s"))
+	flushBytesCounter, _ := metrics.Meter.Int64Counter("yaks.buffer.flush.bytes")
+	flushRecords, _ := metrics.Meter.Int64Counter("yaks.buffer.flush.records")
+	flushEvents, _ := metrics.Meter.Int64Counter("yaks.buffer.flush.events")
 
 	// Swap out current submissions under lock
 	wb.mu.Lock()
@@ -218,10 +225,14 @@ func (wb *WriteBuffer) flush() {
 
 	s3Start := time.Now()
 	_, err := wb.s3Client.PutObject(context.Background(), input)
-	wb.metrics.Timing("buffer.s3_put_duration_ms", time.Since(s3Start), []string{"status:" + statusTag(err)}, 1)
+	s3PutDuration.Record(ctx, time.Since(s3Start).Seconds(), metric.WithAttributes(
+		attribute.String("status", statusTag(err)),
+	))
 	if err != nil {
 		log.WithError(err).Error("WriteBuffer: S3 upload failed")
-		wb.metrics.Timing("buffer.flush_duration_ms", time.Since(flushStart), []string{"status:s3_error"}, 1)
+		flushDuration.Record(ctx, time.Since(flushStart).Seconds(), metric.WithAttributes(
+			attribute.String("status", "s3_error"),
+		))
 		cycle.err = fmt.Errorf("s3 upload failed: %w", err)
 		close(cycle.done)
 		return
@@ -243,19 +254,25 @@ func (wb *WriteBuffer) flush() {
 	// DB commit
 	dbStart := time.Now()
 	err = wb.metastore.CommitRecordBatchEvents(batchEvents)
-	wb.metrics.Timing("buffer.db_commit_duration_ms", time.Since(dbStart), []string{"status:" + statusTag(err)}, 1)
+	dbCommitDuration.Record(ctx, time.Since(dbStart).Seconds(), metric.WithAttributes(
+		attribute.String("status", statusTag(err)),
+	))
 	if err != nil {
 		log.WithError(err).Error("WriteBuffer: DB commit failed")
-		wb.metrics.Timing("buffer.flush_duration_ms", time.Since(flushStart), []string{"status:db_error"}, 1)
+		flushDuration.Record(ctx, time.Since(flushStart).Seconds(), metric.WithAttributes(
+			attribute.String("status", "db_error"),
+		))
 		cycle.err = fmt.Errorf("db commit failed: %w", err)
 		close(cycle.done)
 		return
 	}
 
-	wb.metrics.Count("buffer.flush_bytes", size, nil, 1)
-	wb.metrics.Count("buffer.flush_records", totalRecords, nil, 1)
-	wb.metrics.Count("buffer.flush_events", int64(len(events)), nil, 1)
-	wb.metrics.Timing("buffer.flush_duration_ms", time.Since(flushStart), []string{"status:success"}, 1)
+	flushBytesCounter.Add(ctx, size)
+	flushRecords.Add(ctx, totalRecords)
+	flushEvents.Add(ctx, int64(len(events)))
+	flushDuration.Record(ctx, time.Since(flushStart).Seconds(), metric.WithAttributes(
+		attribute.String("status", "success"),
+	))
 
 	cycle.err = nil
 	close(cycle.done)

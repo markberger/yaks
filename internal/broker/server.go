@@ -10,11 +10,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/markberger/yaks/internal/api"
+	"github.com/markberger/yaks/internal/metrics"
 	log "github.com/sirupsen/logrus"
 	"github.com/twmb/franz-go/pkg/kbin"
 	"github.com/twmb/franz-go/pkg/kmsg"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 type Broker struct {
@@ -24,10 +26,9 @@ type Broker struct {
 	AdvertisedHost  string
 	AdvertisedPort  int32
 	handlerRegistry *handlerRegistry
-	metrics         statsd.ClientInterface
 }
 
-func NewBroker(nodeID int32, host string, port int32, advertisedHost string, advertisedPort int32, metrics statsd.ClientInterface) *Broker {
+func NewBroker(nodeID int32, host string, port int32, advertisedHost string, advertisedPort int32) *Broker {
 	b := Broker{
 		NodeID:          nodeID,
 		Host:            host,
@@ -35,7 +36,6 @@ func NewBroker(nodeID int32, host string, port int32, advertisedHost string, adv
 		AdvertisedHost:  advertisedHost,
 		AdvertisedPort:  advertisedPort,
 		handlerRegistry: NewHandlerRegistry(),
-		metrics:         metrics,
 	}
 	b.Add(NewApiVersionsRequestHandler(b.handlerRegistry))
 	return &b
@@ -89,6 +89,10 @@ func (b *Broker) handleConn(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 
+	requestCount, _ := metrics.Meter.Int64Counter("yaks.requests")
+	requestDuration, _ := metrics.Meter.Float64Histogram("yaks.request.duration", metric.WithUnit("s"))
+	unhandledCount, _ := metrics.Meter.Int64Counter("yaks.requests.unhandled")
+
 	sizeBuf := make([]byte, 4)
 	for {
 		// Check context before proceeding
@@ -140,7 +144,9 @@ func (b *Broker) handleConn(ctx context.Context, conn net.Conn) {
 		apiVersion := strconv.Itoa(int(request.Version()))
 		if handler == nil {
 			log.Error("failed to find appropriate handler")
-			b.metrics.Incr("request.unhandled", []string{"api_key:" + apiKey}, 1)
+			unhandledCount.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("api_key", apiKey),
+			))
 			return
 		}
 
@@ -148,19 +154,23 @@ func (b *Broker) handleConn(ctx context.Context, conn net.Conn) {
 		response, err := handler.Handle(request.Body())
 		duration := time.Since(start)
 
-		b.metrics.Timing("request.duration_ms", duration, []string{"api_key:" + apiKey, "api_version:" + apiVersion}, 1)
+		attrs := []attribute.KeyValue{
+			attribute.String("api_key", apiKey),
+			attribute.String("api_version", apiVersion),
+		}
+		requestDuration.Record(ctx, duration.Seconds(), metric.WithAttributes(attrs...))
 		if err != nil {
 			log.Errorf("handler returned an error: %v", err)
-			b.metrics.Incr("request", []string{"api_key:" + apiKey, "api_version:" + apiVersion, "success:false"}, 1)
+			requestCount.Add(ctx, 1, metric.WithAttributes(append(attrs, attribute.Bool("success", false))...))
 			return
 		}
 
 		errorCode := extractErrorCode(response)
-		tags := []string{"api_key:" + apiKey, "api_version:" + apiVersion, "success:true"}
+		successAttrs := append(attrs, attribute.Bool("success", true))
 		if errorCode != 0 {
-			tags = append(tags, "error_code:"+strconv.Itoa(int(errorCode)))
+			successAttrs = append(successAttrs, attribute.String("error_code", strconv.Itoa(int(errorCode))))
 		}
-		b.metrics.Incr("request", tags, 1)
+		requestCount.Add(ctx, 1, metric.WithAttributes(successAttrs...))
 
 		// Serialize the response and send it to the client
 		// TODO: check return value of conn.Write

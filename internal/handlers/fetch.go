@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/markberger/yaks/internal/metrics"
 	"github.com/markberger/yaks/internal/metastore"
 	"github.com/markberger/yaks/internal/s3_client"
 	log "github.com/sirupsen/logrus"
 	"github.com/twmb/franz-go/pkg/kmsg"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 type FetchRequestHandler struct {
@@ -19,18 +21,22 @@ type FetchRequestHandler struct {
 	s3Client   s3_client.S3Client
 	bucketName string
 	maxBytes   int32
-	metrics    statsd.ClientInterface
 }
 
-func NewFetchRequestHandler(metastore metastore.Metastore, s3Client s3_client.S3Client, bucketName string, maxBytes int32, metrics statsd.ClientInterface) *FetchRequestHandler {
-	return &FetchRequestHandler{metastore, s3Client, bucketName, maxBytes, metrics}
+func NewFetchRequestHandler(metastore metastore.Metastore, s3Client s3_client.S3Client, bucketName string, maxBytes int32) *FetchRequestHandler {
+	return &FetchRequestHandler{metastore, s3Client, bucketName, maxBytes}
 }
 
 func (h *FetchRequestHandler) Key() kmsg.Key     { return kmsg.Fetch }
 func (h *FetchRequestHandler) MinVersion() int16 { return 3 }
 func (h *FetchRequestHandler) MaxVersion() int16 { return 4 }
 func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
+	ctx := context.Background()
 	request := r.(*kmsg.FetchRequest)
+
+	fetchBytes, _ := metrics.Meter.Int64Counter("yaks.fetch.bytes")
+	fetchRecords, _ := metrics.Meter.Int64Counter("yaks.fetch.records")
+	fetchS3Downloads, _ := metrics.Meter.Int64Counter("yaks.fetch.s3.downloads")
 
 	response := kmsg.NewFetchResponse()
 	response.SetVersion(request.GetVersion())
@@ -46,7 +52,7 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 	for _, t := range request.Topics {
 		responseTopic := kmsg.NewFetchResponseTopic()
 		responseTopic.Topic = t.Topic
-		topicTag := []string{"topic:" + t.Topic}
+		topicAttr := attribute.String("topic", t.Topic)
 
 		// Build high water mark map from topic partitions
 		hwmMap := make(map[int32]int64)
@@ -135,9 +141,9 @@ func (h *FetchRequestHandler) Handle(r kmsg.Request) (kmsg.Response, error) {
 		}
 
 		if topicBytes > 0 || topicS3Downloads > 0 {
-			h.metrics.Count("fetch.bytes", topicBytes, topicTag, 1)
-			h.metrics.Count("fetch.records", topicRecords, topicTag, 1)
-			h.metrics.Count("fetch.s3_downloads", topicS3Downloads, topicTag, 1)
+			fetchBytes.Add(ctx, topicBytes, metric.WithAttributes(topicAttr))
+			fetchRecords.Add(ctx, topicRecords, metric.WithAttributes(topicAttr))
+			fetchS3Downloads.Add(ctx, topicS3Downloads, metric.WithAttributes(topicAttr))
 		}
 		response.Topics = append(response.Topics, responseTopic)
 	}

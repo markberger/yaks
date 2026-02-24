@@ -1,5 +1,6 @@
 coverage.out
 .localstack-volume
 agent
+yaks
 .DS_Store
 

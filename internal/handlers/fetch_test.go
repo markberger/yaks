@@ -7,7 +7,6 @@ import (
 	"io"
 	"math"
 
-	"github.com/DataDog/datadog-go/v5/statsd"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/markberger/yaks/internal/metastore"
 	"github.com/markberger/yaks/internal/s3_client"
@@ -93,7 +92,7 @@ func (s *HandlersTestSuite) TestFetch_Success_PatchesFirstOffset() {
 	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(batchBytes), nil)
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32, &statsd.NoOpClient{})
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 	resp, err := handler.Handle(createFetchRequest("fetch-test", 0, 0))
 
 	require.NoError(s.T(), err)
@@ -124,7 +123,7 @@ func (s *HandlersTestSuite) TestFetch_OffsetPastAllBatches_EmptyResponse() {
 	mockS3 := &s3_client.MockS3Client{}
 	// No GetObject calls expected
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32, &statsd.NoOpClient{})
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 	resp, err := handler.Handle(createFetchRequest("fetch-empty", 0, 9999))
 
 	require.NoError(s.T(), err)
@@ -157,7 +156,7 @@ func (s *HandlersTestSuite) TestFetch_MultipleBatches_Concatenated() {
 		return *in.Key == "batch/b.batch"
 	})).Return(mockGetObjectReturn(dataB), nil)
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32, &statsd.NoOpClient{})
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 	resp, err := handler.Handle(createFetchRequest("fetch-multi", 0, 0))
 
 	require.NoError(s.T(), err)
@@ -183,7 +182,7 @@ func (s *HandlersTestSuite) TestFetch_HighWatermark_ReflectsEndOffset() {
 	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(batchBytes), nil)
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32, &statsd.NoOpClient{})
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 	resp, err := handler.Handle(createFetchRequest("fetch-hwm", 0, 0))
 
 	require.NoError(s.T(), err)
@@ -198,7 +197,7 @@ func (s *HandlersTestSuite) TestFetch_HighWatermark_EmptyPartition() {
 
 	mockS3 := &s3_client.MockS3Client{}
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32, &statsd.NoOpClient{})
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 	resp, err := handler.Handle(createFetchRequest("fetch-hwm-empty", 0, 0))
 
 	require.NoError(s.T(), err)
@@ -258,7 +257,7 @@ func (s *HandlersTestSuite) TestFetch_MultipleTopicsAndPartitions() {
 	tB.Partitions = []kmsg.FetchRequestTopicPartition{pB0}
 	req.Topics = []kmsg.FetchRequestTopic{tA, tB}
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32, &statsd.NoOpClient{})
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 	resp, err := handler.Handle(&req)
 
 	require.NoError(s.T(), err)
@@ -293,7 +292,7 @@ func (s *HandlersTestSuite) TestFetch_S3Failure_ReturnsError() {
 		(*s3.GetObjectOutput)(nil), errors.New("connection refused"),
 	)
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32, &statsd.NoOpClient{})
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 	_, err := handler.Handle(createFetchRequest("fetch-s3fail", 0, 0))
 
 	require.Error(s.T(), err)
@@ -323,7 +322,7 @@ func (s *HandlersTestSuite) TestFetch_PartitionMaxBytes_LimitsBatches() {
 	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(data), nil)
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32, &statsd.NoOpClient{})
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 
 	// PartitionMaxBytes=100 → first batch (61) always included, second (61+61=122) exceeds 100
 	req := kmsg.NewFetchRequest()
@@ -366,7 +365,7 @@ func (s *HandlersTestSuite) TestFetch_ServerMaxBytes_OverridesClient() {
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(data), nil)
 
 	// Server max=100, client max=1000 → effective=100
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", 100, &statsd.NoOpClient{})
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", 100)
 
 	req := createFetchRequest("fetch-srvlimit", 0, 0)
 	req.MaxBytes = 1000
@@ -390,7 +389,7 @@ func (s *HandlersTestSuite) TestFetch_FirstBatchAlwaysIncluded() {
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(batchBytes), nil)
 
 	// All limits set to 10, but the single 61-byte batch must still be returned
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", 10, &statsd.NoOpClient{})
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", 10)
 
 	req := kmsg.NewFetchRequest()
 	req.SetVersion(3)
@@ -444,7 +443,7 @@ func (s *HandlersTestSuite) TestFetch_MaxBytes_CumulativeAcrossPartitions() {
 	})).Return(mockGetObjectReturn(dataP1b), nil)
 
 	// MaxBytes=100: partition 0 uses 61, partition 1 gets 39 remaining budget
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32, &statsd.NoOpClient{})
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 
 	req := kmsg.NewFetchRequest()
 	req.SetVersion(3)
@@ -480,7 +479,7 @@ func (s *HandlersTestSuite) TestFetch_V4_LastStableOffset() {
 	mockS3 := &s3_client.MockS3Client{}
 	mockS3.On("GetObject", mock.Anything, mock.Anything).Return(mockGetObjectReturn(batchBytes), nil)
 
-	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32, &statsd.NoOpClient{})
+	handler := NewFetchRequestHandler(ms, mockS3, "test-bucket", math.MaxInt32)
 	resp, err := handler.Handle(createFetchRequestV4("fetch-v4", 0, 0))
 
 	require.NoError(s.T(), err)
