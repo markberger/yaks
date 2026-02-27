@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -18,20 +20,20 @@ import (
 )
 
 type Agent struct {
-	db            *gorm.DB
-	Metastore     metastore.Metastore
-	broker        *broker.Broker
-	s3Client      s3_client.S3Client
-	bucket        string
-	fetchMaxBytes int32
-	buffer        *buffer.WriteBuffer
-	materializer  *materializer.Materializer
-	shutdownOTel  func(context.Context) error
+	db             *gorm.DB
+	Metastore      metastore.Metastore
+	broker         *broker.Broker
+	s3Client       s3_client.S3Client
+	bucket         string
+	fetchMaxBytes  int32
+	buffer         *buffer.WriteBuffer
+	materializer   *materializer.Materializer
+	metricsHandler http.Handler
+	metricsPort    int32
 }
 
 func NewAgent(db *gorm.DB, cfg config.Config) *Agent {
-	ctx := context.Background()
-	shutdown, err := metrics.Init(ctx, cfg.OTel)
+	metricsHandler, err := metrics.Init(cfg.OTel)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to initialize OTel metrics")
 	}
@@ -51,7 +53,18 @@ func NewAgent(db *gorm.DB, cfg config.Config) *Agent {
 		time.Duration(cfg.MaterializeIntervalMs)*time.Millisecond,
 		cfg.MaterializeBatchSize,
 	)
-	return &Agent{db, metastore, b, s3Client, cfg.S3.Bucket, cfg.FetchMaxBytes, buf, mat, shutdown}
+	return &Agent{
+		db:             db,
+		Metastore:      metastore,
+		broker:         b,
+		s3Client:       s3Client,
+		bucket:         cfg.S3.Bucket,
+		fetchMaxBytes:  cfg.FetchMaxBytes,
+		buffer:         buf,
+		materializer:   mat,
+		metricsHandler: metricsHandler,
+		metricsPort:    cfg.OTel.MetricsPort,
+	}
 }
 
 // TODO: agent should not apply migrations it should be done by a separate
@@ -84,15 +97,28 @@ func (a *Agent) ListenAndServe(ctx context.Context) {
 		a.materializer.Start(ctx)
 	}()
 
+	if a.metricsHandler != nil {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", a.metricsHandler)
+		srv := &http.Server{
+			Addr:    fmt.Sprintf(":%d", a.metricsPort),
+			Handler: mux,
+		}
+		go func() {
+			log.WithField("port", a.metricsPort).Info("Serving Prometheus metrics")
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.WithError(err).Error("Metrics server error")
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			srv.Shutdown(context.Background())
+		}()
+	}
+
 	a.broker.ListenAndServe(ctx)
 
 	log.Info("Broker stopped, waiting for buffer and materializer to finish...")
 	wg.Wait()
-
-	if a.shutdownOTel != nil {
-		if err := a.shutdownOTel(context.Background()); err != nil {
-			log.WithError(err).Error("OTel MeterProvider shutdown error")
-		}
-	}
 	log.Info("Agent shutdown complete")
 }

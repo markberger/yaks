@@ -53,7 +53,7 @@ services:
       YAKS_S3_BUCKET: test-bucket
       YAKS_S3_PATH_STYLE: "true"
       YAKS_OTEL_ENABLED: "true"
-      YAKS_OTEL_ENDPOINT: "http://victoriametrics:8428/opentelemetry/v1/metrics"
+      YAKS_METRICS_PORT: "9090"
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,7 +83,7 @@ services:
       YAKS_S3_BUCKET: test-bucket
       YAKS_S3_PATH_STYLE: "true"
       YAKS_OTEL_ENABLED: "true"
-      YAKS_OTEL_ENDPOINT: "http://victoriametrics:8428/opentelemetry/v1/metrics"
+      YAKS_METRICS_PORT: "9090"
     depends_on:
       agent1:
         condition: service_started
@@ -107,7 +107,9 @@ services:
     command:
       - "-retentionPeriod=1d"
       - "-httpListenAddr=:8428"
-      - "--opentelemetry.usePrometheusNaming"
+      - "-promscrape.config=/etc/prometheus/prometheus.yml"
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
       - "8428:8428"
 

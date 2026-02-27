@@ -1,12 +1,11 @@
 package metrics
 
 import (
-	"context"
-	"time"
+	"net/http"
 
 	"github.com/markberger/yaks/internal/config"
-	log "github.com/sirupsen/logrus"
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -17,24 +16,20 @@ import (
 var Meter metric.Meter = noop.NewMeterProvider().Meter("yaks")
 
 // Init configures the global Meter from the given OTel config. When
-// cfg.Enabled is false, Meter remains a no-op. Returns a shutdown function
-// that flushes and closes the exporter.
-func Init(ctx context.Context, cfg config.OTelConfig) (func(context.Context) error, error) {
+// cfg.Enabled is false, Meter remains a no-op and Handler returns nil.
+// The returned http.Handler serves the Prometheus /metrics endpoint.
+func Init(cfg config.OTelConfig) (http.Handler, error) {
 	if !cfg.Enabled {
-		return func(context.Context) error { return nil }, nil
+		return nil, nil
 	}
 
-	exporter, err := otlpmetrichttp.New(ctx,
-		otlpmetrichttp.WithEndpointURL(cfg.Endpoint),
-	)
+	exporter, err := prometheus.New()
 	if err != nil {
 		return nil, err
 	}
 
 	mp := sdkmetric.NewMeterProvider(
-		sdkmetric.WithReader(
-			sdkmetric.NewPeriodicReader(exporter, sdkmetric.WithInterval(10*time.Second)),
-		),
+		sdkmetric.WithReader(exporter),
 		sdkmetric.WithView(sdkmetric.NewView(
 			sdkmetric.Instrument{Kind: sdkmetric.InstrumentKindHistogram, Unit: "s"},
 			sdkmetric.Stream{
@@ -49,10 +44,5 @@ func Init(ctx context.Context, cfg config.OTelConfig) (func(context.Context) err
 
 	Meter = mp.Meter("yaks")
 
-	shutdown := func(ctx context.Context) error {
-		log.Info("Shutting down OTel MeterProvider...")
-		return mp.Shutdown(ctx)
-	}
-
-	return shutdown, nil
+	return promhttp.Handler(), nil
 }

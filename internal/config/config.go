@@ -7,8 +7,8 @@ import (
 )
 
 type OTelConfig struct {
-	Enabled  bool   `env:"YAKS_OTEL_ENABLED"  envDefault:"false"`
-	Endpoint string `env:"YAKS_OTEL_ENDPOINT" envDefault:"http://localhost:8428/opentelemetry"`
+	Enabled     bool   `env:"YAKS_OTEL_ENABLED"      envDefault:"false"`
+	MetricsPort int32  `env:"YAKS_METRICS_PORT"       envDefault:"9090"`
 }
 
 type Config struct {
