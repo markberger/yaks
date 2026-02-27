@@ -48,6 +48,7 @@ func New(nodeID int32, ms metastore.Metastore, s3Client s3_client.S3Client, buck
 
 	c.group = groupcache.NewGroup("s3objects", cacheSizeBytes, groupcache.GetterFunc(
 		func(ctx context.Context, key string, dest groupcache.Sink) error {
+			log.WithField("key", key).Info("Cache miss: fetching from S3")
 			resp, err := s3Client.GetObject(ctx, &s3.GetObjectInput{
 				Bucket: &bucket,
 				Key:    &key,

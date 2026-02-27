@@ -22,6 +22,7 @@ type GroupcacheConfig struct {
 }
 
 type Config struct {
+	NodeID         int32  `env:"YAKS_NODE_ID"          envDefault:"0"`
 	BrokerHost     string `env:"YAKS_BROKER_HOST"      envDefault:"0.0.0.0"`
 	BrokerPort     int32  `env:"YAKS_BROKER_PORT"      envDefault:"9092"`
 	AdvertisedHost string `env:"YAKS_ADVERTISED_HOST"  envDefault:"localhost"`

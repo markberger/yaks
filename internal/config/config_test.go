@@ -11,6 +11,7 @@ func TestLoadDefaults(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 
+	assert.Equal(t, int32(0), cfg.NodeID)
 	assert.Equal(t, "0.0.0.0", cfg.BrokerHost)
 	assert.Equal(t, int32(9092), cfg.BrokerPort)
 	assert.Equal(t, "localhost", cfg.AdvertisedHost)
@@ -42,6 +43,7 @@ func TestLoadDefaults(t *testing.T) {
 }
 
 func TestLoadEnvOverrides(t *testing.T) {
+	t.Setenv("YAKS_NODE_ID", "5")
 	t.Setenv("YAKS_BROKER_HOST", "10.0.0.1")
 	t.Setenv("YAKS_BROKER_PORT", "19092")
 	t.Setenv("YAKS_ADVERTISED_HOST", "public.example.com")
@@ -54,6 +56,7 @@ func TestLoadEnvOverrides(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 
+	assert.Equal(t, int32(5), cfg.NodeID)
 	assert.Equal(t, "10.0.0.1", cfg.BrokerHost)
 	assert.Equal(t, int32(19092), cfg.BrokerPort)
 	assert.Equal(t, "public.example.com", cfg.AdvertisedHost)

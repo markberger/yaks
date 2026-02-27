@@ -41,7 +41,7 @@ func NewAgent(db *gorm.DB, cfg config.Config) *Agent {
 	}
 
 	metastore := metastore.NewGormMetastore(db)
-	b := broker.NewBroker(0, cfg.BrokerHost, cfg.BrokerPort, cfg.AdvertisedHost, cfg.GetAdvertisedPort())
+	b := broker.NewBroker(cfg.NodeID, cfg.BrokerHost, cfg.BrokerPort, cfg.AdvertisedHost, cfg.GetAdvertisedPort())
 	rawS3Client := s3_client.CreateS3Client(cfg.S3)
 
 	// WriteBuffer always uses the raw S3 client (writes are not cached)

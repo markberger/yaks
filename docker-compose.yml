@@ -35,6 +35,7 @@ services:
     build:
       dockerfile: docker/Dockerfile
     environment:
+      YAKS_NODE_ID: "0"
       YAKS_BROKER_HOST: "0.0.0.0"
       YAKS_BROKER_PORT: "9092"
       YAKS_ADVERTISED_HOST: "localhost"
@@ -68,6 +69,7 @@ services:
     build:
       dockerfile: docker/Dockerfile
     environment:
+      YAKS_NODE_ID: "1"
       YAKS_BROKER_HOST: "0.0.0.0"
       YAKS_BROKER_PORT: "9092"
       YAKS_ADVERTISED_HOST: "localhost"
