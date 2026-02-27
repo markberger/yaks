@@ -24,6 +24,10 @@ bucket are required.
   <img src="./docs/imgs/overview_diagram.png" />
 </p>
 
+For cost-effective performance, caching reads to S3 is highly recommended using
+the built-in [`groupcache`](https://github.com/mailgun/groupcache)
+functionality. See the configuration settings below.
+
 See the [System Design](./docs/SYSTEM_DESIGN.md) doc for how yaks works.
 
 ## Quick Start
@@ -79,17 +83,22 @@ go test -p=1 ./...
 ```
 .
 ├── cmd/
-│   └── agent        # run yaks-agent
-├── integration/     # integration tests with testcontainers
+|   ├── agent/          # run yaks-agent
+│   └── oracle/         # run oracle for data integrity testing
+├── integration/        # integration tests with testcontainers
 └── internal/
-    ├── agent/       # yaks-agent
-    ├── api/         # kafka api logic + serialization
-    ├── broker/      # generic kafka broker implementation
-    ├── buffer/      # buffer to group messages before upload
-    ├── config/      # see config env below for settings
-    ├── handlers/    # kafka request handlers
-    ├── metastore/   # store metadata in postgres
-    └── s3_client/   # s3 client helper
+    ├── agent/          # yaks-agent
+    ├── api/            # kafka api logic + serialization
+    ├── broker/         # generic kafka broker implementation
+    ├── buffer/         # buffer to group messages before upload
+    ├── cache/          # groupcache s3 client
+    ├── config/         # see config env below for settings
+    ├── handlers/       # kafka request handlers
+    ├── materializer/   # convert write events to record batches
+    ├── metastore/      # store metadata in postgres
+    ├── metrics/        # otel metrics
+    ├── oracle/         # data integrity testing
+    └── s3_client/      # s3 client helper
 ```
 
 ## Configuration
@@ -100,6 +109,7 @@ All settings are configured via environment variables prefixed with `YAKS_`.
 
 | Variable                       | Default     | Description                                                        |
 | ------------------------------ | ----------- | ------------------------------------------------------------------ |
+| `YAKS_NODE_ID`                 | `0`         | Unique node identifier                                             |
 | `YAKS_BROKER_HOST`             | `0.0.0.0`   | Host address the broker listens on                                 |
 | `YAKS_BROKER_PORT`             | `9092`      | Port the broker listens on                                         |
 | `YAKS_ADVERTISED_HOST`         | `localhost` | Host advertised to clients in metadata responses                   |
@@ -122,13 +132,12 @@ All settings are configured via environment variables prefixed with `YAKS_`.
 | `YAKS_DB_NAME`     | `testdb`       | Database name     |
 | `YAKS_DB_SSLMODE`  | `disable`      | SSL mode          |
 
-### StatsD
+### OpenTelemetry
 
-| Variable              | Default     | Description                    |
-| --------------------- | ----------- | ------------------------------ |
-| `YAKS_STATSD_ENABLED` | `false`     | Enable StatsD metrics emission |
-| `YAKS_STATSD_HOST`    | `localhost` | StatsD host                    |
-| `YAKS_STATSD_PORT`    | `8125`      | StatsD port                    |
+| Variable            | Default | Description                              |
+| ------------------- | ------- | ---------------------------------------- |
+| `YAKS_OTEL_ENABLED` | `false` | Enable OpenTelemetry metrics             |
+| `YAKS_METRICS_PORT` | `9090`  | Port for the Prometheus metrics endpoint |
 
 ### S3
 
@@ -140,6 +149,20 @@ All settings are configured via environment variables prefixed with `YAKS_`.
 | `YAKS_S3_SECRET_KEY` | `test`                  | Secret access key                                   |
 | `YAKS_S3_PATH_STYLE` | `true`                  | Use path-style URLs instead of virtual-hosted-style |
 | `YAKS_S3_BUCKET`     | `test-bucket`           | Bucket name for storing message batches             |
+
+### Groupcache
+
+Optional distributed caching layer that reduces S3 reads across multiple agents.
+
+| Variable                          | Default | Description                                              |
+| --------------------------------- | ------- | -------------------------------------------------------- |
+| `YAKS_GROUPCACHE_ENABLED`         | `false` | Enable groupcache                                        |
+| `YAKS_GROUPCACHE_PORT`            | `9080`  | Port for groupcache peer communication                   |
+| `YAKS_GROUPCACHE_ADVERTISED_HOST` | `""`    | Host advertised to other groupcache peers                |
+| `YAKS_GROUPCACHE_CACHE_SIZE_MB`   | `512`   | Maximum cache size in MB                                 |
+| `YAKS_GROUPCACHE_HEARTBEAT_MS`    | `5000`  | Interval (ms) between heartbeats to the metastore        |
+| `YAKS_GROUPCACHE_POLL_MS`         | `10000` | Interval (ms) between polling for peer list updates      |
+| `YAKS_GROUPCACHE_LEASE_TTL_MS`    | `15000` | TTL (ms) for a node's lease before it is considered dead |
 
 ## Supported API Keys
 
@@ -160,8 +183,6 @@ All settings are configured via environment variables prefixed with `YAKS_`.
 yaks is a MVP implementation and requires additional work to be cost-effective
 and production ready. Some things I'd like to get around to implementing are:
 
-- Use [`groupcache`](https://github.com/golang/groupcache) to cache S3 objects
-  on disk to reduce API calls
 - Compact record batches on S3 in the background for efficient whole-topic
   retrieval
 - Health checks, tracing
@@ -181,3 +202,8 @@ This project would not be possible without these great resources:
 - [Warpstream docs](https://docs.warpstream.com/warpstream/overview/architecture)
 
 - [AutoMQ wiki](https://github.com/AutoMQ/automq/wiki/What-is-automq:-Overview)
+
+- [dl.google.com: Powered by Go](https://go.dev/talks/2013/oscon-dl.slide#43) -
+  [_Brad Fitzpatrick_](https://github.com/bradfitz)
+
+- [Mailgun fork of groupcache](https://github.com/mailgun/groupcache)
