@@ -64,7 +64,7 @@ type ConsumerGroupOffset struct {
 }
 
 type GroupcachePeer struct {
-	NodeID         int32     `gorm:"primaryKey"`
+	NodeID         int32     `gorm:"primaryKey;autoIncrement:false"`
 	PeerURL        string    `gorm:"size:255;not null"`
 	LeaseExpiresAt time.Time `gorm:"not null;index"`
 }

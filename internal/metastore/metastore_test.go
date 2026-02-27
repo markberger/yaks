@@ -1453,3 +1453,109 @@ func (s *MetastoreTestSuite) TestCommitOffset_MultiplePartitions() {
 	require.NoError(T, err)
 	assert.Equal(T, int64(25), offset2)
 }
+
+//
+// Groupcache Peer tests
+//
+
+func (s *MetastoreTestSuite) TestUpsertGroupcachePeer() {
+	ms := s.TestDB.InitMetastore()
+	T := s.T()
+
+	err := ms.UpsertGroupcachePeer(0, "http://node0:9080", 15*time.Second)
+	require.NoError(T, err)
+
+	peers, err := ms.GetLiveGroupcachePeers()
+	require.NoError(T, err)
+	require.Len(T, peers, 1)
+	assert.Equal(T, "http://node0:9080", peers[0])
+}
+
+func (s *MetastoreTestSuite) TestUpsertGroupcachePeer_UpdateExisting() {
+	ms := s.TestDB.InitMetastore()
+	T := s.T()
+
+	// Insert peer
+	err := ms.UpsertGroupcachePeer(0, "http://node0:9080", 15*time.Second)
+	require.NoError(T, err)
+
+	// Upsert same nodeID with a different URL
+	err = ms.UpsertGroupcachePeer(0, "http://node0-new:9080", 15*time.Second)
+	require.NoError(T, err)
+
+	peers, err := ms.GetLiveGroupcachePeers()
+	require.NoError(T, err)
+	require.Len(T, peers, 1)
+	assert.Equal(T, "http://node0-new:9080", peers[0])
+}
+
+func (s *MetastoreTestSuite) TestGetLiveGroupcachePeers_MultiplePeers() {
+	ms := s.TestDB.InitMetastore()
+	T := s.T()
+
+	err := ms.UpsertGroupcachePeer(0, "http://node0:9080", 15*time.Second)
+	require.NoError(T, err)
+	err = ms.UpsertGroupcachePeer(1, "http://node1:9080", 15*time.Second)
+	require.NoError(T, err)
+
+	peers, err := ms.GetLiveGroupcachePeers()
+	require.NoError(T, err)
+	require.Len(T, peers, 2)
+	assert.ElementsMatch(T, []string{"http://node0:9080", "http://node1:9080"}, peers)
+}
+
+func (s *MetastoreTestSuite) TestGetLiveGroupcachePeers_ExcludesExpired() {
+	ms := s.TestDB.InitMetastore()
+	T := s.T()
+
+	// Insert one peer with a long lease
+	err := ms.UpsertGroupcachePeer(0, "http://node0:9080", 15*time.Second)
+	require.NoError(T, err)
+
+	// Insert another peer with already-expired lease (1ms duration, then sleep)
+	err = ms.UpsertGroupcachePeer(1, "http://node1:9080", 1*time.Millisecond)
+	require.NoError(T, err)
+	time.Sleep(5 * time.Millisecond)
+
+	peers, err := ms.GetLiveGroupcachePeers()
+	require.NoError(T, err)
+	require.Len(T, peers, 1)
+	assert.Equal(T, "http://node0:9080", peers[0])
+}
+
+func (s *MetastoreTestSuite) TestDeleteGroupcachePeer() {
+	ms := s.TestDB.InitMetastore()
+	T := s.T()
+
+	err := ms.UpsertGroupcachePeer(0, "http://node0:9080", 15*time.Second)
+	require.NoError(T, err)
+	err = ms.UpsertGroupcachePeer(1, "http://node1:9080", 15*time.Second)
+	require.NoError(T, err)
+
+	// Delete node 0
+	err = ms.DeleteGroupcachePeer(0)
+	require.NoError(T, err)
+
+	peers, err := ms.GetLiveGroupcachePeers()
+	require.NoError(T, err)
+	require.Len(T, peers, 1)
+	assert.Equal(T, "http://node1:9080", peers[0])
+}
+
+func (s *MetastoreTestSuite) TestDeleteGroupcachePeer_NonExistent() {
+	ms := s.TestDB.InitMetastore()
+	T := s.T()
+
+	// Deleting a non-existent peer should not error
+	err := ms.DeleteGroupcachePeer(99)
+	require.NoError(T, err)
+}
+
+func (s *MetastoreTestSuite) TestGetLiveGroupcachePeers_Empty() {
+	ms := s.TestDB.InitMetastore()
+	T := s.T()
+
+	peers, err := ms.GetLiveGroupcachePeers()
+	require.NoError(T, err)
+	require.Len(T, peers, 0)
+}

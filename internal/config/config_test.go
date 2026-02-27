@@ -30,6 +30,15 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Equal(t, "test", cfg.S3.SecretAccessKey)
 	assert.True(t, cfg.S3.UsePathStyle)
 	assert.Equal(t, "test-bucket", cfg.S3.Bucket)
+
+	// Groupcache defaults
+	assert.False(t, cfg.Groupcache.Enabled)
+	assert.Equal(t, int32(9080), cfg.Groupcache.Port)
+	assert.Equal(t, "", cfg.Groupcache.AdvertisedHost)
+	assert.Equal(t, int64(512), cfg.Groupcache.CacheSizeMB)
+	assert.Equal(t, 5000, cfg.Groupcache.HeartbeatInterval)
+	assert.Equal(t, 10000, cfg.Groupcache.PollInterval)
+	assert.Equal(t, 15000, cfg.Groupcache.LeaseTTL)
 }
 
 func TestLoadEnvOverrides(t *testing.T) {
@@ -58,4 +67,25 @@ func TestLoadEnvOverrides(t *testing.T) {
 	// Unset fields still get defaults
 	assert.Equal(t, "testuser", cfg.DB.User)
 	assert.Equal(t, "us-east-1", cfg.S3.Region)
+}
+
+func TestGroupcacheConfigEnvOverrides(t *testing.T) {
+	t.Setenv("YAKS_GROUPCACHE_ENABLED", "true")
+	t.Setenv("YAKS_GROUPCACHE_PORT", "9081")
+	t.Setenv("YAKS_GROUPCACHE_ADVERTISED_HOST", "cache-node-1")
+	t.Setenv("YAKS_GROUPCACHE_CACHE_SIZE_MB", "1024")
+	t.Setenv("YAKS_GROUPCACHE_HEARTBEAT_MS", "3000")
+	t.Setenv("YAKS_GROUPCACHE_POLL_MS", "8000")
+	t.Setenv("YAKS_GROUPCACHE_LEASE_TTL_MS", "20000")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.True(t, cfg.Groupcache.Enabled)
+	assert.Equal(t, int32(9081), cfg.Groupcache.Port)
+	assert.Equal(t, "cache-node-1", cfg.Groupcache.AdvertisedHost)
+	assert.Equal(t, int64(1024), cfg.Groupcache.CacheSizeMB)
+	assert.Equal(t, 3000, cfg.Groupcache.HeartbeatInterval)
+	assert.Equal(t, 8000, cfg.Groupcache.PollInterval)
+	assert.Equal(t, 20000, cfg.Groupcache.LeaseTTL)
 }
