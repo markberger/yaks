@@ -36,6 +36,36 @@ Both agents are behind an nginx proxy serving on `localhost:9092`:
 docker compose --profile multi-agent up
 ```
 
+Optionally, run the oracle cli tool to verify data integrity. The oracle
+launches concurrent producers, records every message to a local SQLite DB,
+consumes all partitions, and checks 6 invariants (completeness, no phantoms, no
+duplicate offsets, contiguous offsets, per-producer ordering, and data
+integrity):
+
+```bash
+go run ./cmd/oracle --brokers localhost:9092
+```
+
+Use flags to adjust the workflow:
+
+```bash
+go run ./cmd/oracle \
+  --brokers localhost:9092 \
+  --topics 2 \
+  --partitions 3 \
+  --producers 50 \
+  --records 200 \
+  --consume-timeout 120s \
+  --data-dir /tmp/oracle-run
+```
+
+A metrics dashboard is also serving on
+[localhost:3000](http://localhost:3000/d/yaks-cluster/yaks-cluster?orgId=1&from=now-5m&to=now&timezone=browser&refresh=10s).
+
+<p align="center">
+  <img src="./docs/imgs/metrics_dashboard.png" />
+</p>
+
 ## Tests
 
 ```bash
@@ -94,11 +124,11 @@ All settings are configured via environment variables prefixed with `YAKS_`.
 
 ### StatsD
 
-| Variable              | Default     | Description                          |
-| --------------------- | ----------- | ------------------------------------ |
-| `YAKS_STATSD_ENABLED` | `false`     | Enable StatsD metrics emission       |
-| `YAKS_STATSD_HOST`    | `localhost` | StatsD host                          |
-| `YAKS_STATSD_PORT`    | `8125`      | StatsD port                          |
+| Variable              | Default     | Description                    |
+| --------------------- | ----------- | ------------------------------ |
+| `YAKS_STATSD_ENABLED` | `false`     | Enable StatsD metrics emission |
+| `YAKS_STATSD_HOST`    | `localhost` | StatsD host                    |
+| `YAKS_STATSD_PORT`    | `8125`      | StatsD port                    |
 
 ### S3
 
