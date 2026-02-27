@@ -3,6 +3,7 @@ package metastore
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq" // Import for pq.Array
@@ -23,6 +24,9 @@ type Metastore interface {
 	GetRecordBatchEvents(topicName string) ([]RecordBatchEvent, error)
 	CommitOffset(groupID string, topicID uuid.UUID, partition int32, offset int64, metadata string) error
 	FetchOffset(groupID string, topicID uuid.UUID, partition int32) (int64, string, error)
+	UpsertGroupcachePeer(nodeID int32, peerURL string, leaseDuration time.Duration) error
+	GetLiveGroupcachePeers() ([]string, error)
+	DeleteGroupcachePeer(nodeID int32) error
 }
 
 // Struct responsible for logic between server and postgres
@@ -46,6 +50,7 @@ func (m *GormMetastore) ApplyMigrations() error {
 		&RecordBatchEvent{},
 		&RecordBatchV2{},
 		&ConsumerGroupOffset{},
+		&GroupcachePeer{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to apply migrations: %w", err)
@@ -393,4 +398,31 @@ func (m *GormMetastore) FetchOffset(groupID string, topicID uuid.UUID, partition
 		return -1, "", err
 	}
 	return result.Offset, result.Metadata, nil
+}
+
+func (m *GormMetastore) UpsertGroupcachePeer(nodeID int32, peerURL string, leaseDuration time.Duration) error {
+	peer := GroupcachePeer{
+		NodeID:         nodeID,
+		PeerURL:        peerURL,
+		LeaseExpiresAt: time.Now().Add(leaseDuration),
+	}
+	return m.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "node_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"peer_url", "lease_expires_at"}),
+	}).Create(&peer).Error
+}
+
+func (m *GormMetastore) GetLiveGroupcachePeers() ([]string, error) {
+	var urls []string
+	err := m.db.Model(&GroupcachePeer{}).
+		Where("lease_expires_at > ?", time.Now()).
+		Pluck("peer_url", &urls).Error
+	if err != nil {
+		return nil, err
+	}
+	return urls, nil
+}
+
+func (m *GormMetastore) DeleteGroupcachePeer(nodeID int32) error {
+	return m.db.Where("node_id = ?", nodeID).Delete(&GroupcachePeer{}).Error
 }

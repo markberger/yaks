@@ -54,6 +54,9 @@ services:
       YAKS_S3_PATH_STYLE: "true"
       YAKS_OTEL_ENABLED: "true"
       YAKS_METRICS_PORT: "9090"
+      YAKS_GROUPCACHE_ENABLED: "true"
+      YAKS_GROUPCACHE_PORT: "9080"
+      YAKS_GROUPCACHE_ADVERTISED_HOST: "agent1"
     depends_on:
       postgres:
         condition: service_healthy
@@ -84,6 +87,9 @@ services:
       YAKS_S3_PATH_STYLE: "true"
       YAKS_OTEL_ENABLED: "true"
       YAKS_METRICS_PORT: "9090"
+      YAKS_GROUPCACHE_ENABLED: "true"
+      YAKS_GROUPCACHE_PORT: "9080"
+      YAKS_GROUPCACHE_ADVERTISED_HOST: "agent2"
     depends_on:
       agent1:
         condition: service_started

@@ -63,6 +63,12 @@ type ConsumerGroupOffset struct {
 	Metadata  string    `gorm:"size:255"`
 }
 
+type GroupcachePeer struct {
+	NodeID         int32     `gorm:"primaryKey"`
+	PeerURL        string    `gorm:"size:255;not null"`
+	LeaseExpiresAt time.Time `gorm:"not null;index"`
+}
+
 type RecordBatchV2 struct {
 	BaseModel
 	TopicID   uuid.UUID `gorm:"type:uuid; index"`

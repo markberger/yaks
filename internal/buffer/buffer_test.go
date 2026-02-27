@@ -81,6 +81,19 @@ func (m *MockMetastore) FetchOffset(groupID string, topicID uuid.UUID, partition
 	return args.Get(0).(int64), args.Get(1).(string), args.Error(2)
 }
 
+func (m *MockMetastore) UpsertGroupcachePeer(nodeID int32, peerURL string, leaseDuration time.Duration) error {
+	return m.Called(nodeID, peerURL, leaseDuration).Error(0)
+}
+
+func (m *MockMetastore) GetLiveGroupcachePeers() ([]string, error) {
+	args := m.Called()
+	return args.Get(0).([]string), args.Error(1)
+}
+
+func (m *MockMetastore) DeleteGroupcachePeer(nodeID int32) error {
+	return m.Called(nodeID).Error(0)
+}
+
 func TestBasicFlush(t *testing.T) {
 	mockS3 := &s3_client.MockS3Client{}
 	mockMeta := &MockMetastore{}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/markberger/yaks/internal/broker"
 	"github.com/markberger/yaks/internal/buffer"
+	"github.com/markberger/yaks/internal/cache"
 	"github.com/markberger/yaks/internal/config"
 	"github.com/markberger/yaks/internal/handlers"
 	"github.com/markberger/yaks/internal/materializer"
@@ -30,6 +31,7 @@ type Agent struct {
 	materializer   *materializer.Materializer
 	metricsHandler http.Handler
 	metricsPort    int32
+	cache          *cache.Cache
 }
 
 func NewAgent(db *gorm.DB, cfg config.Config) *Agent {
@@ -40,9 +42,11 @@ func NewAgent(db *gorm.DB, cfg config.Config) *Agent {
 
 	metastore := metastore.NewGormMetastore(db)
 	b := broker.NewBroker(0, cfg.BrokerHost, cfg.BrokerPort, cfg.AdvertisedHost, cfg.GetAdvertisedPort())
-	s3Client := s3_client.CreateS3Client(cfg.S3)
+	rawS3Client := s3_client.CreateS3Client(cfg.S3)
+
+	// WriteBuffer always uses the raw S3 client (writes are not cached)
 	buf := buffer.NewWriteBuffer(
-		s3Client,
+		rawS3Client,
 		metastore,
 		cfg.S3.Bucket,
 		time.Duration(cfg.FlushIntervalMs)*time.Millisecond,
@@ -53,17 +57,33 @@ func NewAgent(db *gorm.DB, cfg config.Config) *Agent {
 		time.Duration(cfg.MaterializeIntervalMs)*time.Millisecond,
 		cfg.MaterializeBatchSize,
 	)
+
+	// Conditionally wrap fetch S3 client with groupcache
+	var fetchS3Client s3_client.S3Client = rawS3Client
+	var s3Cache *cache.Cache
+	if cfg.Groupcache.Enabled {
+		advertisedHost := cfg.Groupcache.AdvertisedHost
+		if advertisedHost == "" {
+			advertisedHost = cfg.AdvertisedHost
+		}
+		selfURL := fmt.Sprintf("http://%s:%d", advertisedHost, cfg.Groupcache.Port)
+		s3Cache = cache.New(b.NodeID, metastore, rawS3Client, cfg.S3.Bucket, selfURL, cfg.Groupcache)
+		fetchS3Client = cache.NewCachedS3Client(rawS3Client, s3Cache)
+		log.WithField("selfURL", selfURL).Info("Groupcache enabled")
+	}
+
 	return &Agent{
 		db:             db,
 		Metastore:      metastore,
 		broker:         b,
-		s3Client:       s3Client,
+		s3Client:       fetchS3Client,
 		bucket:         cfg.S3.Bucket,
 		fetchMaxBytes:  cfg.FetchMaxBytes,
 		buffer:         buf,
 		materializer:   mat,
 		metricsHandler: metricsHandler,
 		metricsPort:    cfg.OTel.MetricsPort,
+		cache:          s3Cache,
 	}
 }
 
@@ -96,6 +116,14 @@ func (a *Agent) ListenAndServe(ctx context.Context) {
 		defer wg.Done()
 		a.materializer.Start(ctx)
 	}()
+
+	if a.cache != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			a.cache.Start(ctx)
+		}()
+	}
 
 	if a.metricsHandler != nil {
 		mux := http.NewServeMux()

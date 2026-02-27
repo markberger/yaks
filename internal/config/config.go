@@ -11,6 +11,16 @@ type OTelConfig struct {
 	MetricsPort int32  `env:"YAKS_METRICS_PORT"       envDefault:"9090"`
 }
 
+type GroupcacheConfig struct {
+	Enabled           bool   `env:"YAKS_GROUPCACHE_ENABLED"         envDefault:"false"`
+	Port              int32  `env:"YAKS_GROUPCACHE_PORT"            envDefault:"9080"`
+	AdvertisedHost    string `env:"YAKS_GROUPCACHE_ADVERTISED_HOST" envDefault:""`
+	CacheSizeMB       int64  `env:"YAKS_GROUPCACHE_CACHE_SIZE_MB"   envDefault:"512"`
+	HeartbeatInterval int    `env:"YAKS_GROUPCACHE_HEARTBEAT_MS"    envDefault:"5000"`
+	PollInterval      int    `env:"YAKS_GROUPCACHE_POLL_MS"         envDefault:"10000"`
+	LeaseTTL          int    `env:"YAKS_GROUPCACHE_LEASE_TTL_MS"    envDefault:"15000"`
+}
+
 type Config struct {
 	BrokerHost     string `env:"YAKS_BROKER_HOST"      envDefault:"0.0.0.0"`
 	BrokerPort     int32  `env:"YAKS_BROKER_PORT"      envDefault:"9092"`
@@ -26,9 +36,10 @@ type Config struct {
 
 	FetchMaxBytes int32 `env:"YAKS_FETCH_MAX_BYTES" envDefault:"52428800"`
 
-	DB   metastore.Config         `envPrefix:""`
-	S3   s3_client.S3ClientConfig `envPrefix:""`
-	OTel OTelConfig               `envPrefix:""`
+	DB         metastore.Config         `envPrefix:""`
+	S3         s3_client.S3ClientConfig `envPrefix:""`
+	OTel       OTelConfig               `envPrefix:""`
+	Groupcache GroupcacheConfig          `envPrefix:""`
 }
 
 // GetAdvertisedPort returns AdvertisedPort if set, otherwise BrokerPort.
