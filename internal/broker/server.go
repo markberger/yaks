@@ -140,7 +140,7 @@ func (b *Broker) handleConn(ctx context.Context, conn net.Conn) {
 
 		// Run the appropriate Handler to generate a kmsg.Response
 		handler := b.handlerRegistry.Get(request.Body())
-		apiKey := strconv.Itoa(int(request.Body().Key()))
+		apiKey := kmsg.NameForKey(request.Body().Key())
 		apiVersion := strconv.Itoa(int(request.Version()))
 		if handler == nil {
 			log.Error("failed to find appropriate handler")

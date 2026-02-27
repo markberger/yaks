@@ -52,6 +52,8 @@ services:
       YAKS_S3_SECRET_KEY: test
       YAKS_S3_BUCKET: test-bucket
       YAKS_S3_PATH_STYLE: "true"
+      YAKS_OTEL_ENABLED: "true"
+      YAKS_OTEL_ENDPOINT: "http://victoriametrics:8428/opentelemetry/v1/metrics"
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,6 +82,8 @@ services:
       YAKS_S3_SECRET_KEY: test
       YAKS_S3_BUCKET: test-bucket
       YAKS_S3_PATH_STYLE: "true"
+      YAKS_OTEL_ENABLED: "true"
+      YAKS_OTEL_ENDPOINT: "http://victoriametrics:8428/opentelemetry/v1/metrics"
     depends_on:
       agent1:
         condition: service_started
@@ -96,3 +100,28 @@ services:
         condition: service_started
       agent2:
         condition: service_started
+
+  victoriametrics:
+    profiles: ["multi-agent"]
+    image: victoriametrics/victoria-metrics:v1.108.1
+    command:
+      - "-retentionPeriod=1d"
+      - "-httpListenAddr=:8428"
+      - "--opentelemetry.usePrometheusNaming"
+    ports:
+      - "8428:8428"
+
+  grafana:
+    profiles: ["multi-agent"]
+    image: grafana/grafana-oss:11.4.0
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    ports:
+      - "3000:3000"
+    depends_on:
+      - victoriametrics
