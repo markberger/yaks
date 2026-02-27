@@ -1,32 +1,42 @@
-# yaks: Yet Another Kafka on S3
+# yaks: harness the power of the herd 🐂
 
-⚠️ yaks is a work-in-progress and not production-tested software. Use at your
-own risk. ⚠️
+_Kafka-compatible streaming backed by S3 and PostgreSQL._
 
-yaks is a diskless Kafka server that stores data directly to S3. It is inspired
-by similar platforms like [Warpstream](https://www.warpstream.com/) and
+yaks (**y**et **a**nother **k**afka on **S**3) is a diskless Kafka server that
+stores message data directly in S3 and metadata in PostgreSQL. Agents are
+completely stateless — scale them horizontally behind a load balancer with no
+coordination required. Inspired by [Warpstream](https://www.warpstream.com/) and
 [AutoMQ](https://www.automq.com/).
 
-At the cost of increased end-to-end latency, Kafka on S3 provides:
-
-- **Cost savings**: S3 storage is significantly cheaper than EBS with high IOPS
-- **No disk management**: Simply scale up and down the number of agents as load
-  on the service changes
-- **Pain-free topic retention**: Retaining active topics for 30+ days is natural
-
-Because of these trade-offs, yaks is naturally suited to high throughput and
-latency-tolerant applications like logs, event souring, and CDC pipelines.
-
-The system is designed with simplicity in mind. Only a postgres database and S3
-bucket are required.
+🚧 yaks is a work-in-progress and not production-tested. Use at your own risk.
+🚧
 
 <p align="center">
   <img src="./docs/imgs/overview_diagram.png" />
 </p>
 
-For cost-effective performance, caching reads to S3 is highly recommended using
-the built-in [`groupcache`](https://github.com/mailgun/groupcache)
-functionality. See the configuration settings below.
+### Why S3?
+
+- **Cheaper storage** — S3 is a fraction of the cost of EBS with high IOPS
+- **No disk management** — scale agents up and down without worrying about
+  volumes, replication, or rebalancing
+- **Painless retention** — keeping topics for 30+ days costs almost nothing
+
+The trade-off is higher end-to-end latency, making yaks a natural fit for
+throughput-oriented workloads like log aggregation, event sourcing, and CDC
+pipelines.
+
+### Features
+
+- **Kafka wire protocol** — works with existing Kafka clients (franz-go,
+  librdkafka, confluent-kafka-go)
+- **Stateless agents** — horizontal scaling, no broker state to manage
+- **Minimal infrastructure** — just PostgreSQL and an S3-compatible bucket (no
+  ZooKeeper, no KRaft)
+- **Distributed read cache** — built-in
+  [groupcache](https://github.com/mailgun/groupcache) with automatic peer
+  discovery to reduce S3 reads
+- **Built-in observability** — Prometheus metrics via OpenTelemetry
 
 See the [System Design](./docs/SYSTEM_DESIGN.md) doc for how yaks works.
 
@@ -164,7 +174,7 @@ Optional distributed caching layer that reduces S3 reads across multiple agents.
 | `YAKS_GROUPCACHE_POLL_MS`         | `10000` | Interval (ms) between polling for peer list updates      |
 | `YAKS_GROUPCACHE_LEASE_TTL_MS`    | `15000` | TTL (ms) for a node's lease before it is considered dead |
 
-## Supported API Keys
+## Supported Kafka API Keys
 
 | API Key         | Min Version | Max Version |
 | --------------- | ----------- | ----------- |
@@ -177,15 +187,6 @@ Optional distributed caching layer that reduces S3 reads across multiple agents.
 | ListOffsets     | 1           | 4           |
 | OffsetCommit    | 2           | 7           |
 | OffsetFetch     | 1           | 5           |
-
-## Future Work
-
-yaks is a MVP implementation and requires additional work to be cost-effective
-and production ready. Some things I'd like to get around to implementing are:
-
-- Compact record batches on S3 in the background for efficient whole-topic
-  retrieval
-- Health checks, tracing
 
 ## Related Resources
 
